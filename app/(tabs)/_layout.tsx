@@ -4,11 +4,12 @@ import { Tabs } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors } from '@/constants';
+import { useTheme } from '@/constants';
 import { stockItems } from '@/db/database';
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [hasLowStock, setHasLowStock] = useState(false);
 
   const checkLowStock = async () => {
@@ -33,11 +34,11 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: Colors.primary, // #F4A98A
-        tabBarInactiveTintColor: '#C4B5A8', // muted warm gray
+        tabBarActiveTintColor: colors.primary, // #F4A98A
+        tabBarInactiveTintColor: colors.lightText, // muted warm gray
         tabBarStyle: {
-          backgroundColor: Colors.background, // #FFF8F4
-          borderTopColor: '#F0E6DF',
+          backgroundColor: colors.background, // #FFF8F4
+          borderTopColor: colors.lightBorder,
           borderTopWidth: 1,
           paddingBottom: Math.max(8, insets.bottom),
           paddingTop: 8,
@@ -117,7 +118,7 @@ export default function TabsLayout() {
               color={color}
             />
           ),
-          tabBarBadge: hasLowStock ? '!' : null,
+          tabBarBadge: hasLowStock ? '!' : undefined,
         }}
       />
 

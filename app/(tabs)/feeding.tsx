@@ -29,6 +29,9 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 type FeedingType = 'breast' | 'bottle' | 'solids';
 type BreastSide = 'left' | 'right';
+type BottleUnit = 'ml' | 'oz';
+
+const ML_PER_OUNCE = 29.5735;
 
 interface ToastMessage {
   id: string;
@@ -55,6 +58,7 @@ export default function FeedingScreen() {
 
   // Bottle state
   const [bottleAmount, setBottleAmount] = useState(0);
+  const [bottleUnit, setBottleUnit] = useState<BottleUnit>('ml');
   const [bottleMilkType, setBottleMilkType] = useState<'formula' | 'breast milk'>('formula');
 
   // Solids state
@@ -250,7 +254,7 @@ export default function FeedingScreen() {
           showToast('Please enter an amount');
           return;
         }
-        amount = bottleAmount;
+        amount = getBottleAmountInMl();
       } else if (activeTab === 'solids') {
         if (!solidsFood.trim()) {
           showToast('Please enter a food name');
@@ -266,7 +270,7 @@ export default function FeedingScreen() {
         activeTab === 'solids'
           ? `${solidsFood}${solidsAmount ? ', ' + solidsAmount : ''}${solidsNotes ? '. ' + solidsNotes : ''}`
           : activeTab === 'bottle'
-            ? `${bottleMilkType}`
+            ? getBottleNote()
             : ''
       );
 
@@ -276,6 +280,7 @@ export default function FeedingScreen() {
         resetBreastTimer('right');
       } else if (activeTab === 'bottle') {
         setBottleAmount(0);
+        setBottleUnit('ml');
         setBottleMilkType('formula');
       } else {
         setSolidsFood('');
@@ -307,7 +312,11 @@ export default function FeedingScreen() {
     </TouchableOpacity>
   );
 
-  const getTypeInfo = (type: FeedingType) => {
+  const getTypeInfo = (type: FeedingType): {
+    icon: keyof typeof Ionicons.glyphMap;
+    bgColor: string;
+    color: string;
+  } => {
     switch (type) {
       case 'breast':
         return {
@@ -333,6 +342,33 @@ export default function FeedingScreen() {
   const switchTab = (newTab: FeedingType) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveTab(newTab);
+  };
+
+  const getBottleAmountInMl = (): number => {
+    if (bottleUnit === 'oz') {
+      return Math.round(bottleAmount * ML_PER_OUNCE);
+    }
+
+    return bottleAmount;
+  };
+
+  const getBottleNote = (): string => {
+    return bottleUnit === 'oz'
+      ? `${bottleMilkType} · ${bottleAmount} oz`
+      : bottleMilkType;
+  };
+
+  const getBottleDisplayAmount = (item: FeedingLog): string => {
+    const ozMatch = item.notes?.match(/·\s*([\d.]+)\s*oz/i);
+    if (ozMatch) {
+      return `${ozMatch[1]}oz`;
+    }
+
+    return `${item.amount_ml}ml`;
+  };
+
+  const getBottleDisplayNote = (item: FeedingLog): string => {
+    return item.notes?.replace(/\s*·\s*[\d.]+\s*oz/i, '') || 'Formula';
   };
 
   return (
@@ -375,7 +411,11 @@ export default function FeedingScreen() {
           {(['breast', 'bottle', 'solids'] as const).map((tab) => {
             const isActive = activeTab === tab;
             const tabLabels = { breast: 'Breast', bottle: 'Bottle', solids: 'Solids' };
-            const tabIcons = { breast: 'heart-outline', bottle: 'water-outline', solids: 'leaf-outline' };
+            const tabIcons: Record<FeedingType, keyof typeof Ionicons.glyphMap> = {
+              breast: 'heart-outline',
+              bottle: 'water-outline',
+              solids: 'leaf-outline',
+            };
             const tabColors = {
               breast: { active: '#F4A98A', bg: '#FFF0E8', border: '#F4A98A' },
               bottle: { active: '#185FA5', bg: '#EBF7FF', border: '#185FA5' },
@@ -480,11 +520,37 @@ export default function FeedingScreen() {
             <View>
               <View style={[styles.bottleCard, { backgroundColor: Colors.card }]}>
                 <Text style={styles.bottleLabel}>Amount</Text>
-                <Text style={styles.amountDisplay}>{bottleAmount} ml</Text>
+                <Text style={styles.amountDisplay}>{bottleAmount} {bottleUnit}</Text>
+
+                <View style={styles.unitToggleContainer}>
+                  {(['ml', 'oz'] as const).map((unit) => (
+                    <TouchableOpacity
+                      key={unit}
+                      style={[
+                        styles.unitTogglePill,
+                        bottleUnit === unit && styles.unitTogglePillActive,
+                      ]}
+                      onPress={() => {
+                        setBottleUnit(unit);
+                        setBottleAmount(0);
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.unitToggleText,
+                          bottleUnit === unit && styles.unitToggleTextActive,
+                        ]}
+                      >
+                        {unit.toUpperCase()}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
                 {/* Quick add pills */}
                 <View style={styles.quickPillsRow}>
-                  {[10, 30, 50, 100].map((amount) => (
+                  {(bottleUnit === 'ml' ? [10, 30, 50, 100] : [1, 2, 4, 6]).map((amount) => (
                     <TouchableOpacity
                       key={amount}
                       style={styles.quickPill}
@@ -493,7 +559,7 @@ export default function FeedingScreen() {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       }}
                     >
-                      <Text style={styles.quickPillText}>+{amount}ml</Text>
+                      <Text style={styles.quickPillText}>+{amount}{bottleUnit}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -503,9 +569,9 @@ export default function FeedingScreen() {
                   style={[styles.manualInput, { borderColor: Colors.primary }]}
                   placeholder="Or type amount manually"
                   placeholderTextColor={Colors.lightText}
-                  keyboardType="number-pad"
+                  keyboardType="decimal-pad"
                   value={bottleAmount > 0 ? bottleAmount.toString() : ''}
-                  onChangeText={(text) => setBottleAmount(parseInt(text) || 0)}
+                  onChangeText={(text) => setBottleAmount(parseFloat(text) || 0)}
                 />
 
                 {/* Milk type toggle */}
@@ -644,7 +710,7 @@ export default function FeedingScreen() {
                         )}
                         {item.type === 'bottle' && item.amount_ml && (
                           <Text style={styles.historyDetails}>
-                            {item.amount_ml}ml · {item.notes || 'Formula'}
+                            {getBottleDisplayAmount(item)} · {getBottleDisplayNote(item)}
                           </Text>
                         )}
                         {item.type === 'solids' && (
@@ -657,7 +723,7 @@ export default function FeedingScreen() {
                           {item.type === 'breast'
                             ? `${item.duration_minutes}m`
                             : item.type === 'bottle'
-                              ? `${item.amount_ml}ml`
+                              ? getBottleDisplayAmount(item)
                               : ''}
                         </Text>
                       </View>
@@ -846,6 +912,39 @@ const styles = StyleSheet.create({
     color: Colors.text,
     textAlign: 'center',
     marginBottom: Spacing.lg,
+  },
+  unitToggleContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#EBF7FF',
+    borderRadius: 16,
+    padding: 4,
+    marginBottom: Spacing.lg,
+    borderWidth: 1,
+    borderColor: '#D7ECFA',
+  },
+  unitTogglePill: {
+    flex: 1,
+    borderRadius: 12,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  unitTogglePillActive: {
+    backgroundColor: '#185FA5',
+    shadowColor: '#185FA5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.14,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  unitToggleText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#185FA5',
+  },
+  unitToggleTextActive: {
+    color: 'white',
   },
   quickPillsRow: {
     flexDirection: 'row',

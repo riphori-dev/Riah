@@ -21,7 +21,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 
-import { Colors, Spacing } from '@/constants';
+import { Colors, Spacing, useTheme } from '@/constants';
 import { appointments, Appointment } from '@/db/database';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -43,6 +43,7 @@ interface ToastMessage {
 
 export default function AppointmentsScreen() {
   const insets = useSafeAreaInsets();
+  const { colors, isDarkMode } = useTheme();
   const [activeTab, setActiveTab] = useState<TabType>('upcoming');
   const [upcomingAppointments, setUpcomingAppointments] = useState<AppointmentWithStatus[]>([]);
   const [pastAppointments, setPastAppointments] = useState<AppointmentWithStatus[]>([]);
@@ -453,7 +454,7 @@ export default function AppointmentsScreen() {
     return (
       <Swipeable renderRightActions={() => renderRightActions(item.id)}>
         <TouchableOpacity
-          style={[styles.appointmentCard, { backgroundColor: '#FFFAF7' }]}
+          style={[styles.appointmentCard, { backgroundColor: colors.card }]}
           onPress={() => {
             setSelectedAppointment(item);
             setShowDetailModal(true);
@@ -469,24 +470,24 @@ export default function AppointmentsScreen() {
 
             {/* Content */}
             <View style={styles.appointmentInfo}>
-              <Text style={styles.appointmentTitle}>{item.title}</Text>
+              <Text style={[styles.appointmentTitle, { color: colors.text }]}>{item.title}</Text>
               {item.is_vaccine && item.vaccine_name && (
                 <Text style={styles.vaccineName}>💉 {item.vaccine_name}</Text>
               )}
               <View style={styles.appointmentMeta}>
-                <Ionicons name="time-outline" size={13} color="#8C7B6E" />
-                <Text style={styles.appointmentMetaText}>{formatTime(item.date)}</Text>
+                <Ionicons name="time-outline" size={13} color={colors.lightText} />
+                <Text style={[styles.appointmentMetaText, { color: colors.lightText }]}>{formatTime(item.date)}</Text>
               </View>
               {item.doctor_name && (
                 <View style={styles.appointmentMeta}>
-                  <Ionicons name="person-outline" size={13} color="#8C7B6E" />
-                  <Text style={styles.appointmentMetaText}>{item.doctor_name}</Text>
+                  <Ionicons name="person-outline" size={13} color={colors.lightText} />
+                  <Text style={[styles.appointmentMetaText, { color: colors.lightText }]}>{item.doctor_name}</Text>
                 </View>
               )}
               {item.location && (
                 <View style={styles.appointmentMeta}>
-                  <Ionicons name="location-outline" size={13} color="#8C7B6E" />
-                  <Text style={styles.appointmentMetaText}>{item.location}</Text>
+                  <Ionicons name="location-outline" size={13} color={colors.lightText} />
+                  <Text style={[styles.appointmentMetaText, { color: colors.lightText }]}>{item.location}</Text>
                 </View>
               )}
             </View>
@@ -495,7 +496,7 @@ export default function AppointmentsScreen() {
             {!isPast && (
               <View style={styles.appointmentActions}>
                 <TouchableOpacity
-                  style={styles.editButton}
+                  style={[styles.editButton, { backgroundColor: isDarkMode ? colors.background : '#FFF0E8' }]}
                   onPress={() => {
                     setEditingAppointment(item);
                     setFormData({
@@ -548,7 +549,7 @@ export default function AppointmentsScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: '#FFF8F4' }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={{ paddingBottom: Spacing.xl }}
@@ -556,16 +557,16 @@ export default function AppointmentsScreen() {
       >
         {/* Header with Add Button */}
         <View style={[styles.headerContainer, { paddingTop: insets.top + Spacing.lg }]}>
-          <Text style={styles.headerTitle}>Appointments</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Appointments</Text>
           <TouchableOpacity
-            style={styles.addButton}
+            style={[styles.addButton, { backgroundColor: isDarkMode ? colors.card : '#FFF0E8' }]}
             onPress={() => {
               resetForm();
               setShowAddModal(true);
             }}
             activeOpacity={0.7}
           >
-            <Ionicons name="add" size={20} color="#F4A98A" />
+            <Ionicons name="add" size={20} color={colors.primary} />
           </TouchableOpacity>
         </View>
 
@@ -575,7 +576,9 @@ export default function AppointmentsScreen() {
             style={[
               styles.alertBanner,
               {
-                backgroundColor: isNearby ? '#FFF0E8' : '#EAF3DE',
+                backgroundColor: isNearby
+                  ? (isDarkMode ? '#3A2720' : '#FFF0E8')
+                  : (isDarkMode ? '#203321' : '#EAF3DE'),
                 borderColor: isNearby ? '#F4A98A' : '#A8D5BA',
               },
             ]}
@@ -588,8 +591,8 @@ export default function AppointmentsScreen() {
               />
             </View>
             <View style={styles.alertContent}>
-              <Text style={styles.alertTitle}>{upcomingAlert.title}</Text>
-              <Text style={styles.alertTime}>
+              <Text style={[styles.alertTitle, { color: colors.text }]}>{upcomingAlert.title}</Text>
+              <Text style={[styles.alertTime, { color: colors.lightText }]}>
                 {getDaysUntilLabel(upcomingAlert.daysUntil)} • {formatTime(upcomingAlert.date)}
               </Text>
             </View>
@@ -607,11 +610,11 @@ export default function AppointmentsScreen() {
         )}
 
         {/* Custom Tab Bar */}
-        <View style={styles.tabBar}>
+        <View style={[styles.tabBar, { backgroundColor: colors.card }]}>
           <TouchableOpacity
             style={[
               styles.tabButton,
-              activeTab === 'upcoming' && styles.tabButtonActive,
+              activeTab === 'upcoming' && [styles.tabButtonActive, { backgroundColor: isDarkMode ? colors.background : '#FFF0E8' }],
             ]}
             onPress={() => switchTab('upcoming')}
             activeOpacity={0.7}
@@ -619,11 +622,12 @@ export default function AppointmentsScreen() {
             <Ionicons
               name="calendar-outline"
               size={18}
-              color={activeTab === 'upcoming' ? '#F4A98A' : '#8C7B6E'}
+              color={activeTab === 'upcoming' ? colors.primary : colors.lightText}
             />
             <Text
               style={[
                 styles.tabButtonText,
+                { color: colors.lightText },
                 activeTab === 'upcoming' && styles.tabButtonTextActive,
               ]}
             >
@@ -634,7 +638,7 @@ export default function AppointmentsScreen() {
           <TouchableOpacity
             style={[
               styles.tabButton,
-              activeTab === 'past' && styles.tabButtonActive,
+              activeTab === 'past' && [styles.tabButtonActive, { backgroundColor: isDarkMode ? colors.background : '#FFF0E8' }],
             ]}
             onPress={() => switchTab('past')}
             activeOpacity={0.7}
@@ -642,11 +646,12 @@ export default function AppointmentsScreen() {
             <Ionicons
               name="time-outline"
               size={18}
-              color={activeTab === 'past' ? '#F4A98A' : '#8C7B6E'}
+              color={activeTab === 'past' ? colors.primary : colors.lightText}
             />
             <Text
               style={[
                 styles.tabButtonText,
+                { color: colors.lightText },
                 activeTab === 'past' && styles.tabButtonTextActive,
               ]}
             >
@@ -660,11 +665,11 @@ export default function AppointmentsScreen() {
           {activeTab === 'upcoming' ? (
             upcomingAppointments.length === 0 ? (
               <View style={styles.emptyState}>
-                <View style={styles.emptyStateIconContainer}>
-                  <Ionicons name="calendar-outline" size={48} color="#F4A98A" />
+                <View style={[styles.emptyStateIconContainer, { backgroundColor: isDarkMode ? colors.card : '#FFF0E8' }]}>
+                  <Ionicons name="calendar-outline" size={48} color={colors.primary} />
                 </View>
-                <Text style={styles.emptyStateTitle}>No Upcoming Appointments</Text>
-                <Text style={styles.emptyStateSubtitle}>
+                <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No Upcoming Appointments</Text>
+                <Text style={[styles.emptyStateSubtitle, { color: colors.lightText }]}>
                   Schedule your baby's next appointment
                 </Text>
               </View>
@@ -679,11 +684,11 @@ export default function AppointmentsScreen() {
             )
           ) : pastAppointments.length === 0 ? (
             <View style={styles.emptyState}>
-              <View style={styles.emptyStateIconContainer}>
-                <Ionicons name="time-outline" size={48} color="#F4A98A" />
+              <View style={[styles.emptyStateIconContainer, { backgroundColor: isDarkMode ? colors.card : '#FFF0E8' }]}>
+                <Ionicons name="time-outline" size={48} color={colors.primary} />
               </View>
-              <Text style={styles.emptyStateTitle}>No Past Appointments</Text>
-              <Text style={styles.emptyStateSubtitle}>
+              <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No Past Appointments</Text>
+              <Text style={[styles.emptyStateSubtitle, { color: colors.lightText }]}>
                 Your past appointments will appear here
               </Text>
             </View>
@@ -709,10 +714,10 @@ export default function AppointmentsScreen() {
           resetForm();
         }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
             {/* Modal Header */}
-            <View style={styles.modalHeader}>
+            <View style={[styles.modalHeader, { borderBottomColor: colors.card }]}>
               <TouchableOpacity
                 onPress={() => {
                   setShowAddModal(false);
@@ -720,9 +725,9 @@ export default function AppointmentsScreen() {
                 }}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Ionicons name="close" size={24} color="#4A3728" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
-              <Text style={styles.modalTitle}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
                 {editingAppointment ? 'Edit Appointment' : 'New Appointment'}
               </Text>
               <View style={{ width: 24 }} />
@@ -735,11 +740,11 @@ export default function AppointmentsScreen() {
             >
               {/* Title Input */}
               <View style={styles.formField}>
-                <Text style={styles.inputLabel}>Appointment Title</Text>
+                <Text style={[styles.inputLabel, { color: colors.text }]}>Appointment Title</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { backgroundColor: colors.card, color: colors.text }]}
                   placeholder="e.g., 2-Month Checkup"
-                  placeholderTextColor="#8C7B6E"
+                  placeholderTextColor={colors.lightText}
                   value={formData.title}
                   onChangeText={(text) =>
                     setFormData({ ...formData, title: text })
@@ -749,9 +754,9 @@ export default function AppointmentsScreen() {
 
               {/* Date Input */}
               <View style={styles.formField}>
-                <Text style={styles.inputLabel}>Date</Text>
+                <Text style={[styles.inputLabel, { color: colors.text }]}>Date</Text>
                 <TouchableOpacity
-                  style={styles.datePickerButton}
+                  style={[styles.datePickerButton, { backgroundColor: colors.card }]}
                   onPress={() => {
                     setDatePickerMode('date');
                     setShowDatePicker(true);
@@ -759,7 +764,7 @@ export default function AppointmentsScreen() {
                   activeOpacity={0.7}
                 >
                   <Ionicons name="calendar-outline" size={18} color="#F4A98A" />
-                  <Text style={styles.datePickerButtonText}>
+                  <Text style={[styles.datePickerButtonText, { color: colors.text }]}>
                     {formData.date.toLocaleDateString('en-US', {
                       month: 'short',
                       day: 'numeric',
@@ -771,14 +776,14 @@ export default function AppointmentsScreen() {
 
               {/* Time Input */}
               <View style={styles.formField}>
-                <Text style={styles.inputLabel}>Time</Text>
+                <Text style={[styles.inputLabel, { color: colors.text }]}>Time</Text>
                 <TouchableOpacity
-                  style={styles.datePickerButton}
+                  style={[styles.datePickerButton, { backgroundColor: colors.card }]}
                   onPress={() => setShowTimePicker(true)}
                   activeOpacity={0.7}
                 >
                   <Ionicons name="time-outline" size={18} color="#F4A98A" />
-                  <Text style={styles.datePickerButtonText}>
+                  <Text style={[styles.datePickerButtonText, { color: colors.text }]}>
                     {formatTimeFromDate(formData.time)}
                   </Text>
                 </TouchableOpacity>
@@ -1333,11 +1338,11 @@ export default function AppointmentsScreen() {
 
               {/* Doctor Name */}
               <View style={styles.formField}>
-                <Text style={styles.inputLabel}>Doctor Name</Text>
+                <Text style={[styles.inputLabel, { color: colors.text }]}>Doctor Name</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { backgroundColor: colors.card, color: colors.text }]}
                   placeholder="e.g., Dr. Sarah Smith"
-                  placeholderTextColor="#8C7B6E"
+                  placeholderTextColor={colors.lightText}
                   value={formData.doctor_name}
                   onChangeText={(text) =>
                     setFormData({ ...formData, doctor_name: text })
@@ -1347,11 +1352,11 @@ export default function AppointmentsScreen() {
 
               {/* Location */}
               <View style={styles.formField}>
-                <Text style={styles.inputLabel}>Location</Text>
+                <Text style={[styles.inputLabel, { color: colors.text }]}>Location</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { backgroundColor: colors.card, color: colors.text }]}
                   placeholder="e.g., Pediatric Clinic"
-                  placeholderTextColor="#8C7B6E"
+                  placeholderTextColor={colors.lightText}
                   value={formData.location}
                   onChangeText={(text) =>
                     setFormData({ ...formData, location: text })
@@ -1362,7 +1367,7 @@ export default function AppointmentsScreen() {
               {/* Vaccine Toggle */}
               <View style={styles.formField}>
                 <View style={styles.vaccineTitleRow}>
-                  <Text style={styles.inputLabel}>Vaccine Appointment</Text>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Vaccine Appointment</Text>
                   <Switch
                     value={formData.is_vaccine}
                     onValueChange={(value) =>
@@ -1375,9 +1380,9 @@ export default function AppointmentsScreen() {
 
                 {formData.is_vaccine && (
                   <TextInput
-                    style={[styles.textInput, { marginTop: Spacing.md }]}
+                    style={[styles.textInput, { marginTop: Spacing.md, backgroundColor: colors.card, color: colors.text }]}
                     placeholder="Vaccine name (e.g., Rotavirus)"
-                    placeholderTextColor="#8C7B6E"
+                    placeholderTextColor={colors.lightText}
                     value={formData.vaccine_name}
                     onChangeText={(text) =>
                       setFormData({ ...formData, vaccine_name: text })
@@ -1388,11 +1393,11 @@ export default function AppointmentsScreen() {
 
               {/* Notes */}
               <View style={styles.formField}>
-                <Text style={styles.inputLabel}>Notes</Text>
+                <Text style={[styles.inputLabel, { color: colors.text }]}>Notes</Text>
                 <TextInput
-                  style={[styles.textInput, { minHeight: 100 }]}
+                  style={[styles.textInput, { minHeight: 100, backgroundColor: colors.card, color: colors.text }]}
                   placeholder="Any additional notes or reminders"
-                  placeholderTextColor="#8C7B6E"
+                  placeholderTextColor={colors.lightText}
                   value={formData.notes}
                   onChangeText={(text) =>
                     setFormData({ ...formData, notes: text })
@@ -1405,9 +1410,9 @@ export default function AppointmentsScreen() {
             </ScrollView>
 
             {/* Modal Buttons */}
-            <View style={styles.modalFooter}>
+            <View style={[styles.modalFooter, { borderTopColor: colors.card }]}>
               <TouchableOpacity
-                style={styles.cancelButton}
+                style={[styles.cancelButton, { backgroundColor: colors.card }]}
                 onPress={() => {
                   setShowAddModal(false);
                   resetForm();

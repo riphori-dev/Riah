@@ -53,6 +53,7 @@ export interface Appointment {
 
 export interface BabyProfile {
   id: number;
+  name: string;
   age_months: number;
   birthdate: string | null; // ISO date string
   gender: 'girl' | 'boy' | 'neutral';
@@ -140,6 +141,7 @@ export async function initDatabase(): Promise<void> {
         sql: `
           CREATE TABLE IF NOT EXISTS baby_profile (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT DEFAULT 'Baby',
             age_months INTEGER,
             birthdate TEXT,
             gender TEXT DEFAULT 'neutral',
@@ -163,6 +165,17 @@ export async function initDatabase(): Promise<void> {
     // Verify all tables were created
     const createdTables = await database.getAllAsync('SELECT name FROM sqlite_master WHERE type="table"');
     console.log('✅ All tables created:', createdTables.map((t: any) => t.name));
+
+    // Migrate baby_profile table to add name column if it doesn't exist
+    try {
+      await database.execAsync(
+        'ALTER TABLE baby_profile ADD COLUMN name TEXT DEFAULT "Baby";'
+      );
+      console.log('✅ baby_profile name column added via migration');
+    } catch (e) {
+      // Column already exists, ignore
+      console.log('ℹ️ baby_profile name column already exists or migration not needed');
+    }
 
   } catch (error) {
     console.error('Error initializing database:', error);
@@ -462,6 +475,7 @@ export const appointments = {
  */
 export const babyProfile = {
   async insert(
+    name: string,
     age_months: number,
     birthdate: string | null = null,
     gender: 'girl' | 'boy' | 'neutral' = 'neutral'
@@ -473,6 +487,7 @@ export const babyProfile = {
       await database.execAsync(`
         CREATE TABLE IF NOT EXISTS baby_profile (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT DEFAULT 'Baby',
           age_months INTEGER NOT NULL,
           birthdate TEXT,
           gender TEXT CHECK(gender IN ('girl', 'boy', 'neutral')),
@@ -486,8 +501,8 @@ export const babyProfile = {
     
     const created_at = new Date().toISOString();
     const result = await database.runAsync(
-      `INSERT INTO baby_profile (age_months, birthdate, gender, created_at) VALUES (?, ?, ?, ?)`,
-      [age_months, birthdate, gender, created_at]
+      `INSERT INTO baby_profile (name, age_months, birthdate, gender, created_at) VALUES (?, ?, ?, ?, ?)`,
+      [name, age_months, birthdate, gender, created_at]
     );
     return result.lastInsertRowId;
   },

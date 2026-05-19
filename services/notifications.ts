@@ -62,18 +62,19 @@ export class NotificationService {
 
   static async runAllChecks() {
     try {
+      const babyName = await AsyncStorage.getItem('babyName') ?? 'Baby';
       await Promise.all([
-        this.checkDiaperAlert(),
-        this.checkFeedingAlert(),
+        this.checkDiaperAlert(babyName),
+        this.checkFeedingAlert(babyName),
         this.checkStockAlert(),
-        this.checkAppointmentAlert(),
+        this.checkAppointmentAlert(babyName),
       ]);
     } catch (error) {
       console.error('Error running notification checks:', error);
     }
   }
 
-  static async checkDiaperAlert() {
+  static async checkDiaperAlert(babyName: string) {
     try {
       const latestLog = await getLatestDiaperLog();
       
@@ -83,7 +84,7 @@ export class NotificationService {
         if (appOpenTime) {
           const timeSinceOpen = Date.now() - parseInt(appOpenTime);
           if (timeSinceOpen >= 2 * 60 * 60 * 1000) {
-            await this.sendNotification('First diaper log 👶', "Don't forget to log baby's first diaper change in Riah!");
+            await this.sendNotification('First diaper log 👶', `Don't forget to log ${babyName}'s first diaper change in Riah!`);
           }
         }
         return;
@@ -102,9 +103,9 @@ export class NotificationService {
       }
 
       if (hoursSince >= 4) {
-        await this.sendNotification('Diaper change needed! 🚨', "It's been over 4 hours since the last diaper change. Baby might need attention!");
+        await this.sendNotification('Diaper change needed! 🚨', `It's been over 4 hours since ${babyName}'s last diaper change. ${babyName} might need attention!`);
       } else if (hoursSince >= 3) {
-        await this.sendNotification('Diaper check 💧', "It's been 3 hours since the last diaper change. Time to check!");
+        await this.sendNotification('Diaper check 💧', `It's been 3 hours since ${babyName}'s last diaper change. Time to check!`);
       }
 
       // Save notification timestamp
@@ -114,7 +115,7 @@ export class NotificationService {
     }
   }
 
-  static async checkFeedingAlert() {
+  static async checkFeedingAlert(babyName: string) {
     try {
       const latestLog = await getLatestFeedingLog();
       
@@ -124,7 +125,7 @@ export class NotificationService {
         if (appOpenTime) {
           const timeSinceOpen = Date.now() - parseInt(appOpenTime);
           if (timeSinceOpen >= 2 * 60 * 60 * 1000) {
-            await this.sendNotification('First feeding log 🍼', "Remember to log baby's feedings so Riah can track pattern!");
+            await this.sendNotification('First feeding log 🍼', `Remember to log ${babyName}'s feedings so Riah can track pattern!`);
           }
         }
         return;
@@ -143,9 +144,9 @@ export class NotificationService {
       }
 
       if (hoursSince >= 3.5) {
-        await this.sendNotification('Baby might be hungry! 🚨', "It's been over 3.5 hours since the last feeding. Time to feed!");
+        await this.sendNotification(`${babyName} might be hungry! 🚨`, `It's been over 3.5 hours since ${babyName}'s last feeding. Time to feed!`);
       } else if (hoursSince >= 2.5) {
-        await this.sendNotification('Feeding time? 🍼', "It's been 2.5 hours since the last feed. Baby might be getting hungry!");
+        await this.sendNotification('Feeding time? 🍼', `${babyName} might be getting hungry!`);
       }
 
       // Save notification timestamp
@@ -193,7 +194,7 @@ export class NotificationService {
     }
   }
 
-  static async checkAppointmentAlert() {
+  static async checkAppointmentAlert(babyName: string) {
     try {
       const upcomingAppointments = await getUpcomingAppointments();
       
@@ -234,16 +235,16 @@ export class NotificationService {
 
         if (daysUntil === 7 && Math.abs(hoursUntil) <= 1) {
           title = 'Appointment next week 📅';
-          body = `${appointment.title} with ${appointment.doctor_name || 'doctor'} is in 7 days on ${formattedDate}.`;
+          body = `${babyName}'s ${appointment.title} with ${appointment.doctor_name || 'doctor'} is in 7 days on ${formattedDate}.`;
         } else if (daysUntil === 3 && Math.abs(hoursUntil) <= 1) {
           title = 'Appointment in 3 days 📅';
-          body = `${appointment.title} with ${appointment.doctor_name || 'doctor'} on ${formattedDate} at ${formattedTime}.`;
+          body = `${babyName}'s ${appointment.title} with ${appointment.doctor_name || 'doctor'} on ${formattedDate} at ${formattedTime}.`;
         } else if (daysUntil === 1 && Math.abs(hoursUntil) <= 1) {
           title = 'Appointment tomorrow! 📅';
-          body = `Don't forget: ${appointment.title} with ${appointment.doctor_name || 'doctor'} tomorrow at ${formattedTime}.`;
+          body = `${babyName}'s ${appointment.title} is tomorrow at ${formattedTime}.`;
         } else if (daysUntil === 0 && Math.abs(hoursUntil) <= 1) {
           title = 'Appointment today! 🏥';
-          body = `${appointment.title} with ${appointment.doctor_name || 'doctor'} is today at ${formattedTime}. Get ready!`;
+          body = `${babyName}'s ${appointment.title} is today at ${formattedTime}. Get ready!`;
         }
 
         if (title && body) {

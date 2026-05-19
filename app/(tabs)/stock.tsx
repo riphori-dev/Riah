@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { Colors, Spacing } from '@/constants';
 import { stockItems, StockItem } from '@/db/database';
@@ -27,35 +28,12 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 const CATEGORIES = ['Diapers', 'Wipes', 'Formula', 'Medicine', 'Other'];
 
-const DEFAULT_ITEMS = [
-  {
-    name: 'Newborn Diapers',
-    category: 'Diapers',
-    quantity: 2,
-    low_stock_threshold: 1,
-    unit: 'packs',
-  },
-  {
-    name: 'Wet Wipes',
-    category: 'Wipes',
-    quantity: 3,
-    low_stock_threshold: 1,
-    unit: 'packs',
-  },
-  {
-    name: 'Formula',
-    category: 'Formula',
-    quantity: 1,
-    low_stock_threshold: 1,
-    unit: 'cans',
-  },
-  {
-    name: 'Baby Tylenol',
-    category: 'Medicine',
-    quantity: 1,
-    low_stock_threshold: 1,
-    unit: 'bottles',
-  },
+const DEFAULT_STOCK_CLEANUP_KEY = 'stockDefaultItemsCleaned';
+const DEFAULT_STOCK_CLEANUP_ITEMS = [
+  { name: 'Newborn Diapers', category: 'Diapers', quantity: 2, low_stock_threshold: 1, unit: 'packs' },
+  { name: 'Wet Wipes', category: 'Wipes', quantity: 3, low_stock_threshold: 1, unit: 'packs' },
+  { name: 'Formula', category: 'Formula', quantity: 1, low_stock_threshold: 1, unit: 'cans' },
+  { name: 'Baby Tylenol', category: 'Medicine', quantity: 1, low_stock_threshold: 1, unit: 'bottles' },
 ];
 
 interface StockItemWithCategory extends StockItem {
@@ -101,23 +79,29 @@ export default function StockScreen() {
 
   const loadData = useCallback(async () => {
     try {
-      const stockData = await stockItems.getAll();
-      if (stockData.length === 0) {
-        // Insert default items one by one
-        for (const item of DEFAULT_ITEMS) {
-          await stockItems.insert(
-            item.name,
-            item.category,
-            item.quantity,
-            item.low_stock_threshold,
-            item.unit
-          );
+      let stockData = await stockItems.getAll();
+      const hasCleanedDefaultItems = await AsyncStorage.getItem(DEFAULT_STOCK_CLEANUP_KEY);
+
+      if (!hasCleanedDefaultItems) {
+        const defaultItemIds = stockData
+          .filter((item) => DEFAULT_STOCK_CLEANUP_ITEMS.some((defaultItem) => (
+            item.name === defaultItem.name &&
+            item.category === defaultItem.category &&
+            item.quantity === defaultItem.quantity &&
+            item.low_stock_threshold === defaultItem.low_stock_threshold &&
+            item.unit === defaultItem.unit
+          )))
+          .map((item) => item.id);
+
+        if (defaultItemIds.length > 0) {
+          await Promise.all(defaultItemIds.map((id) => stockItems.deleteById(id)));
+          stockData = await stockItems.getAll();
         }
-        const newData = await stockItems.getAll();
-        setItems(newData);
-      } else {
-        setItems(stockData);
+
+        await AsyncStorage.setItem(DEFAULT_STOCK_CLEANUP_KEY, 'true');
       }
+
+      setItems(stockData);
     } catch (error) {
       console.error('Error loading stock items:', error);
     }
@@ -311,7 +295,7 @@ export default function StockScreen() {
         </View>
 
         {/* Stock Status Banner */}
-        {lowStockItems.length > 0 ? (
+        {items.length > 0 && (lowStockItems.length > 0 ? (
           <View style={[styles.statusBanner, { backgroundColor: '#FFF0E8' }]}>
             <View style={styles.statusIcon}>
               <Ionicons name="alert-circle" size={24} color={Colors.primary} />
@@ -333,7 +317,7 @@ export default function StockScreen() {
             <Ionicons name="checkmark-circle" size={20} color="#3B6D11" />
             <Text style={styles.allStockedText}>All stocked</Text>
           </View>
-        )}
+        ))}
 
         {/* Categorized Stock List */}
         {Object.entries(groupedItems).map(([category, categoryItems]) => {
@@ -365,8 +349,7 @@ export default function StockScreen() {
         {items.length === 0 && (
           <View style={styles.emptyState}>
             <Ionicons name="cube-outline" size={64} color={Colors.primary} style={{ opacity: 0.4 }} />
-            <Text style={styles.emptyStateText}>No items yet</Text>
-            <Text style={styles.emptyStateSubtext}>Tap + to add your first stock item</Text>
+            <Text style={styles.emptyStateText}>Please enter your baby item stocks.</Text>
           </View>
         )}
       </ScrollView>

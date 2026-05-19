@@ -6,12 +6,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, View, Text } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
-import { Colors } from '@/constants';
+import { ThemeProvider, useTheme } from '@/constants';
 import { initDatabase } from '@/db/database';
 import NotificationService from '@/services/notifications';
 
 export default function RootLayout() {
+  return (
+    <ThemeProvider>
+      <RootLayoutContent />
+    </ThemeProvider>
+  );
+}
+
+function RootLayoutContent() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [isReady, setIsReady] = useState(false);
   const [targetRoute, setTargetRoute] = useState<string | null>(null);
 
@@ -61,9 +70,9 @@ export default function RootLayout() {
 
   if (!isReady) {
     return (
-      <View style={{ flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ color: Colors.primary, fontSize: 24, fontWeight: 'bold' }}>Riah</Text>
-        <ActivityIndicator size="large" color={Colors.primary} style={{ marginTop: 16 }} />
+      <View style={{ flex: 1, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>Riah</Text>
+        <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 16 }} />
       </View>
     );
   }
@@ -74,13 +83,15 @@ export default function RootLayout() {
         <Stack
           screenOptions={{
             headerShown: false,
-            contentStyle: { backgroundColor: Colors.background },
+            contentStyle: { backgroundColor: colors.background },
             animation: 'slide_from_right'
           }}
         >
           <Stack.Screen name="landing" options={{ headerShown: false }} />
           <Stack.Screen name="setup" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="settings" options={{ headerShown: false }} />
+          <Stack.Screen name="about" options={{ headerShown: false }} />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

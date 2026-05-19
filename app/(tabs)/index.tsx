@@ -13,9 +13,12 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import { ImpactFeedbackStyle } from 'expo-haptics';
 
-import { Colors, Spacing } from '@/constants';
+import { Colors, Spacing, useTheme } from '@/constants';
 import { diaperLogs, feedingLogs, sleepLogs, stockItems, appointments, babyProfile } from '@/db/database';
 import BabyIllustration from '@/components/BabyIllustration';
 import QuickLogModals from '@/components/QuickLogModals';
@@ -26,8 +29,10 @@ const { width } = Dimensions.get('window');
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { colors, isDarkMode } = useTheme();
   const [refreshing, setRefreshing] = useState(false);
   const [timerTick, setTimerTick] = useState(0); // Force re-render on timer update
+  const [babyName, setBabyName] = useState('Baby');
   const [data, setData] = useState({
     babyInfo: null as any,
     lastDiaper: null as any,
@@ -112,6 +117,9 @@ export default function HomeScreen() {
       // Store raw timestamps for fresh calculation on every render
       const diaperTimestamp = lastDiaper[0] ? new Date(lastDiaper[0].timestamp).toISOString() : null;
       const feedingTimestamp = lastFeeding[0] ? new Date(lastFeeding[0].timestamp).toISOString() : null;
+
+      // Set baby name from database
+      setBabyName(babyInfo?.name ?? 'Baby');
 
       setData({
         babyInfo,
@@ -235,33 +243,38 @@ export default function HomeScreen() {
       {/* SECTION 1 - Custom Header Bar */}
       <View style={[styles.header, { paddingTop: insets.top + Spacing.lg }]}>
         <View style={styles.headerLeft}>
-          <Text style={styles.greeting}>{getGreeting()}, Dad 👋</Text>
-          <Text style={styles.riahTitle}>Riah</Text>
+          <Text style={[styles.greeting, { color: colors.lightText }]}>{getGreeting()}, Dad 👋</Text>
+          <Text style={[styles.riahTitle, { color: colors.text }]}>Riah</Text>
         </View>
-        <TouchableOpacity style={styles.notificationButton}>
-          <MaterialCommunityIcons name="bell" size={20} color={Colors.primary} />
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: isDarkMode ? colors.card : '#FFF0E8' }]} onPress={() => router.push('/settings')}>
+            <Ionicons name="settings-outline" size={22} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: isDarkMode ? colors.card : '#FFF0E8' }]}>
+            <MaterialCommunityIcons name="bell" size={20} color={colors.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* SECTION 2 - Baby Hero Card */}
-      <View style={styles.heroCard}>
+      <View style={[styles.heroCard, { backgroundColor: isDarkMode ? colors.card : '#FFF0E8' }]}>
         <View style={styles.heroLeft}>
-          <Text style={styles.heroSubtitle}>Baby is</Text>
+          <Text style={[styles.heroSubtitle, { color: colors.lightText }]}>{babyName} is</Text>
           {data.babyInfo ? (
-            <Text style={styles.heroAge}>
+            <Text style={[styles.heroAge, { color: colors.text }]}>
               {data.babyInfo.age_months} month{data.babyInfo.age_months !== 1 ? 's' : ''} old
             </Text>
           ) : (
-            <Text style={styles.heroAge}>--</Text>
+            <Text style={[styles.heroAge, { color: colors.text }]}>--</Text>
           )}
-          <Text style={styles.heroDate}>{getTodayDate()}</Text>
+          <Text style={[styles.heroDate, { color: colors.lightText }]}>{getTodayDate()}</Text>
           
           <View style={styles.heroStats}>
-            <View style={styles.statPill}>
-              <Text style={styles.statPillText}>💧 {getTimeAgo(data.diaperTimestamp)}</Text>
+            <View style={[styles.statPill, { backgroundColor: isDarkMode ? colors.background : '#FFFAF7' }]}>
+              <Text style={[styles.statPillText, { color: colors.text }]}>💧 {getTimeAgo(data.diaperTimestamp)}</Text>
             </View>
-            <View style={styles.statPill}>
-              <Text style={styles.statPillText}>🍼 {getTimeAgo(data.feedingTimestamp)}</Text>
+            <View style={[styles.statPill, { backgroundColor: isDarkMode ? colors.background : '#FFFAF7' }]}>
+              <Text style={[styles.statPillText, { color: colors.text }]}>🍼 {getTimeAgo(data.feedingTimestamp)}</Text>
             </View>
           </View>
         </View>
@@ -273,29 +286,41 @@ export default function HomeScreen() {
 
       {/* SECTION 3 - Quick Log Buttons */}
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Quick log</Text>
+        <Text style={[styles.sectionLabel, { color: colors.lightText }]}>Quick log</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <TouchableOpacity
-            style={[styles.quickLogButton, { backgroundColor: '#EBF7FF' }]}
-            onPress={() => setDiaperModalVisible(true)}
+            style={[styles.quickLogButton, { backgroundColor: isDarkMode ? '#173145' : '#EBF7FF' }]}
+            onPress={() => {
+              Haptics.impactAsync(ImpactFeedbackStyle.Light);
+              router.push('/(tabs)/diaper');
+            }}
           >
             <Text style={[styles.quickLogButtonText, { color: '#185FA5' }]}>💧 Diaper</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.quickLogButton, { backgroundColor: '#FFF0E8' }]}
-            onPress={() => setFeedingModalVisible(true)}
+            style={[styles.quickLogButton, { backgroundColor: isDarkMode ? '#3A2720' : '#FFF0E8' }]}
+            onPress={() => {
+              Haptics.impactAsync(ImpactFeedbackStyle.Light);
+              router.push('/(tabs)/feeding');
+            }}
           >
             <Text style={[styles.quickLogButtonText, { color: '#854F0B' }]}>🍼 Feed</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.quickLogButton, { backgroundColor: '#EAF3DE' }]}
-            onPress={() => setSleepModalVisible(true)}
+            style={[styles.quickLogButton, { backgroundColor: isDarkMode ? '#203321' : '#EAF3DE' }]}
+            onPress={() => {
+              Haptics.impactAsync(ImpactFeedbackStyle.Light);
+              router.push('/(tabs)/sleep');
+            }}
           >
             <Text style={[styles.quickLogButtonText, { color: '#3B6D11' }]}>😴 Sleep</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.quickLogButton, { backgroundColor: '#FAEEDA' }]}
-            onPress={() => setStockModalVisible(true)}
+            style={[styles.quickLogButton, { backgroundColor: isDarkMode ? '#3A2D18' : '#FAEEDA' }]}
+            onPress={() => {
+              Haptics.impactAsync(ImpactFeedbackStyle.Light);
+              router.push('/(tabs)/stock');
+            }}
           >
             <Text style={[styles.quickLogButtonText, { color: '#854F0B' }]}>📦 Stock</Text>
           </TouchableOpacity>
@@ -304,40 +329,40 @@ export default function HomeScreen() {
 
       {/* SECTION 4 - Status Cards Grid */}
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Today's summary</Text>
+        <Text style={[styles.sectionLabel, { color: colors.lightText }]}>Today's summary</Text>
         <View style={styles.cardsGrid}>
           {/* Diaper Card */}
-          <View style={[styles.statusCard, { borderLeftColor: '#EBF7FF', borderLeftWidth: 4 }]}>
-            <Text style={styles.statusCardValue}>{getTimeAgo(data.diaperTimestamp)}</Text>
-            <Text style={styles.statusCardSubtext}>
+          <View style={[styles.statusCard, { backgroundColor: colors.card, borderLeftColor: '#5BA8D4', borderLeftWidth: 4 }]}>
+            <Text style={[styles.statusCardValue, { color: colors.text }]}>{getTimeAgo(data.diaperTimestamp)}</Text>
+            <Text style={[styles.statusCardSubtext, { color: colors.lightText }]}>
               {data.lastDiaper ? `${data.lastDiaper.type.charAt(0).toUpperCase() + data.lastDiaper.type.slice(1)} · ${data.todayStats.diapers} changes today` : 'No changes today'}
             </Text>
           </View>
 
           {/* Feeding Card */}
-          <View style={[styles.statusCard, { borderLeftColor: '#FFF0E8', borderLeftWidth: 4 }]}>
-            <Text style={styles.statusCardValue}>{getTimeAgo(data.feedingTimestamp)}</Text>
-            <Text style={styles.statusCardSubtext}>
+          <View style={[styles.statusCard, { backgroundColor: colors.card, borderLeftColor: colors.primary, borderLeftWidth: 4 }]}>
+            <Text style={[styles.statusCardValue, { color: colors.text }]}>{getTimeAgo(data.feedingTimestamp)}</Text>
+            <Text style={[styles.statusCardSubtext, { color: colors.lightText }]}>
               {data.lastFeeding ? `${data.lastFeeding.type.charAt(0).toUpperCase() + data.lastFeeding.type.slice(1)} · ${data.todayStats.feeds} feeds today` : 'No feeds today'}
             </Text>
           </View>
 
           {/* Sleep Card */}
-          <View style={[styles.statusCard, { borderLeftColor: '#EAF3DE', borderLeftWidth: 4 }]}>
-            <Text style={styles.statusCardValue}>
+          <View style={[styles.statusCard, { backgroundColor: colors.card, borderLeftColor: colors.secondary, borderLeftWidth: 4 }]}>
+            <Text style={[styles.statusCardValue, { color: colors.text }]}>
               {data.todayStats.sleep > 0 ? formatDuration(data.todayStats.sleep) : '--'}
             </Text>
-            <Text style={styles.statusCardSubtext}>
+            <Text style={[styles.statusCardSubtext, { color: colors.lightText }]}>
               {data.isCurrentlySleeping ? 'Sleeping now 🌙' : (data.lastSleep ? `Last nap: ${formatTimestampAgo(data.lastSleep.start_time)}` : 'No sleep logged')}
             </Text>
           </View>
 
           {/* Stock Card */}
-          <View style={[styles.statusCard, { borderLeftColor: '#FAEEDA', borderLeftWidth: 4 }]}>
+          <View style={[styles.statusCard, { backgroundColor: colors.card, borderLeftColor: colors.accent, borderLeftWidth: 4 }]}>
             <Text style={[styles.statusCardValue, { color: data.lowStockCount > 0 ? '#F9C784' : '#A8D5BA' }]}>
               {data.lowStockCount > 0 ? `${data.lowStockCount} items low` : 'All stocked ✓'}
             </Text>
-            <Text style={styles.statusCardSubtext}>Diapers · Wipes · Formula</Text>
+            <Text style={[styles.statusCardSubtext, { color: colors.lightText }]}>Diapers · Wipes · Formula</Text>
           </View>
         </View>
       </View>
@@ -428,7 +453,11 @@ const styles = StyleSheet.create({
     color: '#4A3728',
     marginTop: 2,
   },
-  notificationButton: {
+  headerRight: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  iconButton: {
     width: 40,
     height: 40,
     borderRadius: 20,

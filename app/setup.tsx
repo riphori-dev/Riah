@@ -1,29 +1,64 @@
 import React, { useState, useMemo } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
+  ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
-  Dimensions,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing } from '@/constants';
 import { babyProfile } from '@/db/database';
 
-const { height: screenHeight } = Dimensions.get('window');
+const PALETTE = {
+  background: '#FFF8F4',
+  card: '#FFFAF7',
+  primary: '#F4A98A',
+  mint: '#A8D5BA',
+  yellow: '#F9C784',
+  text: '#4A3728',
+  muted: '#8C7B6E',
+  lightText: '#C4B5A8',
+  border: '#F0EDE8',
+  softPeach: '#FFF0E8',
+  successBg: '#EAF3DE',
+  success: '#3B6D11',
+  boy: '#5BA8D4',
+};
+
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+type Gender = 'girl' | 'boy' | 'neutral';
 
 export default function SetupScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [name, setName] = useState('');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [selectedGender, setSelectedGender] = useState<'girl' | 'boy' | 'neutral'>('neutral');
+  const [selectedGender, setSelectedGender] = useState<Gender>('neutral');
   const [showDatePicker, setShowDatePicker] = useState(false);
 
   // Calculate age in months from birthdate
@@ -36,22 +71,15 @@ export default function SetupScreen() {
 
   // Generate date picker data
   const datePickerData = useMemo(() => {
-    const today = new Date();
-    const maxDate = new Date(today);
-    maxDate.setFullYear(today.getFullYear() + 1); // Allow future dates up to 1 year
-    
-    const minDate = new Date(today);
-    minDate.setFullYear(today.getFullYear() - 5); // Allow dates from 5 years ago
-
+    const currentYear = new Date().getFullYear();
     const years = [];
-    for (let year = maxDate.getFullYear(); year >= minDate.getFullYear(); year--) {
+    for (let year = currentYear; year >= 2020; year--) {
       years.push(year);
     }
 
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const days = Array.from({ length: 31 }, (_, i) => i + 1);
 
-    return { years, months, days };
+    return { years, months: MONTHS, days };
   }, []);
 
   const [pickerYear, setPickerYear] = useState(new Date().getFullYear());
@@ -64,21 +92,36 @@ export default function SetupScreen() {
     setShowDatePicker(false);
   };
 
+  const handleGenderSelect = (gender: Gender) => {
+    Haptics.selectionAsync();
+    setSelectedGender(gender);
+  };
+
   const handleContinue = async () => {
     if (!selectedDate) return;
 
     try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setIsSubmitting(true);
 
       // Calculate age in months
       const ageMonths = calculateAgeInMonths(selectedDate);
 
+      // Clean and capitalize name
+      const cleanName = name.trim().length > 0
+        ? name.trim().replace(/^\w/, c => c.toUpperCase())
+        : 'Baby';
+
       // Save to SQLite baby_profile
       await babyProfile.insert(
+        cleanName,
         ageMonths,
         selectedDate.toISOString().split('T')[0], // YYYY-MM-DD format
         selectedGender
       );
+
+      // Save name to AsyncStorage for quick access
+      await AsyncStorage.setItem('babyName', cleanName);
 
       // Save onboarded flag to AsyncStorage
       await AsyncStorage.setItem('onboarded', 'true');
@@ -92,135 +135,159 @@ export default function SetupScreen() {
   };
 
   const isContinueDisabled = !selectedDate || isSubmitting;
+  const formattedDate = selectedDate?.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
 
   return (
-    <View style={[styles.container, { backgroundColor: Colors.background }]}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: Spacing.xl }}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
         bounces={false}
       >
-        {/* Top spacing */}
-        <View style={{ height: Spacing.xl }} />
-
-        {/* Header with back button */}
-        <View style={styles.header}>
+        <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.back()}
+            onPress={() => router.replace('/landing')}
             activeOpacity={0.7}
           >
-            <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.primary} />
+            <Ionicons name="arrow-back" size={24} color={PALETTE.text} />
           </TouchableOpacity>
-          
-          <View style={styles.headerCenter}>
-            <Text style={styles.progressText}>Step 1 of 1</Text>
-          </View>
-          
-          <View style={styles.headerRight} />
+
+          <Text style={styles.stepText}>Step 1 of 1</Text>
+
+          <View style={styles.topBarSpacer} />
         </View>
 
-        {/* Main content */}
-        <View style={styles.content}>
-          <Text style={styles.heading}>Tell us about your baby 🍼</Text>
+        <View style={styles.header}>
+          <View style={styles.headerIconCircle}>
+            <Ionicons name="happy-outline" size={40} color={PALETTE.primary} />
+          </View>
+          <Text style={styles.heading}>Tell us about your baby</Text>
           <Text style={styles.subtitle}>
-            This helps Riah track the right things for your little one.
+            This helps Riah personalize{'\n'}everything for you.
           </Text>
+        </View>
 
-          {/* Birthdate Input */}
-          <View style={styles.inputSection}>
-            <Text style={styles.inputLabel}>Baby's birthdate</Text>
-            <TouchableOpacity
-              style={[styles.dateInput, { backgroundColor: Colors.card }]}
-              onPress={() => setShowDatePicker(true)}
-              activeOpacity={0.7}
-            >
-              <Text style={[
-                styles.dateInputText,
-                { color: selectedDate ? Colors.text : Colors.lightText }
-              ]}>
-                {selectedDate 
-                  ? selectedDate.toLocaleDateString('en-US', { 
-                      year: 'numeric', 
-                      month: 'long', 
-                      day: 'numeric' 
-                    })
-                  : 'Select birthdate'
-                }
+        <View style={styles.formCard}>
+          <FieldLabel icon="heart-outline" label="BABY'S NAME" />
+          <TextInput
+            style={styles.textInput}
+            placeholder="e.g. Lucia"
+            placeholderTextColor={PALETTE.lightText}
+            value={name}
+            onChangeText={setName}
+            autoCapitalize="words"
+            maxLength={30}
+            returnKeyType="next"
+          />
+          {name.trim().length > 0 && (
+            <Text style={styles.namePreview}>Hi, {name.trim()}!</Text>
+          )}
+
+          <View style={styles.divider} />
+
+          <FieldLabel icon="calendar-outline" label="BABY'S BIRTHDATE" />
+          <TouchableOpacity
+            style={styles.dateButton}
+            onPress={() => setShowDatePicker(true)}
+            activeOpacity={0.75}
+          >
+            <View style={styles.dateButtonLeft}>
+              <Ionicons name="calendar-outline" size={18} color={PALETTE.primary} />
+              <Text
+                style={[
+                  styles.dateButtonText,
+                  { color: selectedDate ? PALETTE.text : PALETTE.lightText },
+                ]}
+              >
+                {formattedDate ?? 'Tap to select birthdate'}
               </Text>
-              <MaterialCommunityIcons name="calendar" size={20} color={Colors.primary} />
-            </TouchableOpacity>
-            
-            {/* Age calculation display */}
-            {selectedDate && (
-              <Text style={styles.ageDisplay}>
-                That's {calculateAgeInMonths(selectedDate)} months old 🎉
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={PALETTE.lightText} />
+          </TouchableOpacity>
+
+          {!selectedDate && (
+            <View style={styles.validationRow}>
+              <Ionicons name="alert-circle-outline" size={13} color={PALETTE.primary} />
+              <Text style={styles.validationText}>
+                {' '}Please select your baby's birthdate to continue
               </Text>
-            )}
+            </View>
+          )}
+
+          {selectedDate && (
+            <View style={styles.agePill}>
+              <Ionicons name="checkmark-circle" size={14} color={PALETTE.success} />
+              <Text style={styles.ageText}>
+                {' '}{calculateAgeInMonths(selectedDate)} months old
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.divider} />
+
+          <View style={styles.genderLabelRow}>
+            <Ionicons name="person-outline" size={14} color={PALETTE.primary} />
+            <Text style={styles.fieldLabelText}> BABY'S GENDER</Text>
+            <Text style={styles.optionalLabel}> · Optional</Text>
           </View>
 
-          {/* Gender Selection */}
-          <View style={styles.inputSection}>
-            <Text style={styles.inputLabel}>Baby's gender</Text>
-            <View style={styles.genderButtons}>
-              <TouchableOpacity
-                style={[
-                  styles.genderButton,
-                  selectedGender === 'girl' && styles.genderButtonSelected
-                ]}
-                onPress={() => setSelectedGender('girl')}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  styles.genderButtonText,
-                  selectedGender === 'girl' && styles.genderButtonTextSelected
-                ]}>
-                  Girl 🎀
-                </Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[
-                  styles.genderButton,
-                  selectedGender === 'boy' && styles.genderButtonSelected
-                ]}
-                onPress={() => setSelectedGender('boy')}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  styles.genderButtonText,
-                  selectedGender === 'boy' && styles.genderButtonTextSelected
-                ]}>
-                  Boy 🍀
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.optionalText}>Optional - defaults to neutral</Text>
+          <View style={styles.genderButtons}>
+            <GenderPill
+              gender="girl"
+              icon="heart"
+              label="Girl"
+              isSelected={selectedGender === 'girl'}
+              onPress={() => handleGenderSelect('girl')}
+            />
+            <GenderPill
+              gender="boy"
+              icon="star"
+              label="Boy"
+              isSelected={selectedGender === 'boy'}
+              onPress={() => handleGenderSelect('boy')}
+            />
+            {/* <GenderPill
+              gender="neutral"
+              icon="remove-circle-outline"
+              label="Skip"
+              isSelected={selectedGender === 'neutral'}
+              isLast
+              onPress={() => handleGenderSelect('neutral')}
+            /> */}
           </View>
         </View>
-      </ScrollView>
 
-      {/* Bottom button */}
-      <View style={[styles.buttonContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
         <TouchableOpacity
           style={[
             styles.continueButton,
-            { 
-              backgroundColor: isContinueDisabled ? Colors.lightText : Colors.primary,
-              opacity: isContinueDisabled ? 0.5 : 1
-            }
+            { opacity: isContinueDisabled ? 0.5 : 1 },
           ]}
           onPress={handleContinue}
           disabled={isContinueDisabled}
-          activeOpacity={0.7}
+          activeOpacity={0.8}
         >
-          <Text style={styles.buttonText}>
-            {isSubmitting ? 'Setting up...' : 'Continue →'}
-          </Text>
+          {isSubmitting ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <View style={styles.continueContent}>
+              <Ionicons name="arrow-forward-circle-outline" size={22} color="#FFFFFF" />
+              <Text style={styles.continueText}>Continue</Text>
+            </View>
+          )}
         </TouchableOpacity>
-      </View>
 
-      {/* Custom Date Picker Modal */}
+        <Text style={styles.footerNote}>You can change these anytime in Settings</Text>
+      </ScrollView>
+
       <Modal
         visible={showDatePicker}
         transparent
@@ -228,105 +295,164 @@ export default function SetupScreen() {
         onRequestClose={() => setShowDatePicker(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: Colors.background }]}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowDatePicker(false)}>
-                <Text style={styles.cancelButton}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Select Birthdate</Text>
-              <TouchableOpacity onPress={handleDateSelect}>
-                <Text style={styles.confirmButton}>Done</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
+            <View style={styles.dragHandle} />
+            <Text style={styles.modalTitle}>Select Birthdate</Text>
 
             <View style={styles.pickerContainer}>
-              {/* Day Picker */}
-              <View style={styles.pickerColumn}>
-                <Text style={styles.pickerLabel}>Day</Text>
-                <ScrollView
-                  style={styles.pickerScroll}
-                  showsVerticalScrollIndicator={false}
-                  nestedScrollEnabled={true}
-                >
-                  {datePickerData.days.map((day) => (
-                    <TouchableOpacity
-                      key={day}
-                      style={[
-                        styles.pickerItem,
-                        pickerDay === day && { backgroundColor: Colors.primary }
-                      ]}
-                      onPress={() => setPickerDay(day)}
-                    >
-                      <Text style={[
-                        styles.pickerItemText,
-                        pickerDay === day && { color: '#FFFFFF' }
-                      ]}>
-                        {day}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Month Picker */}
-              <View style={styles.pickerColumn}>
-                <Text style={styles.pickerLabel}>Month</Text>
-                <ScrollView
-                  style={styles.pickerScroll}
-                  showsVerticalScrollIndicator={false}
-                  nestedScrollEnabled={true}
-                >
-                  {datePickerData.months.map((month, index) => (
-                    <TouchableOpacity
-                      key={month}
-                      style={[
-                        styles.pickerItem,
-                        pickerMonth === index && { backgroundColor: Colors.primary }
-                      ]}
-                      onPress={() => setPickerMonth(index)}
-                    >
-                      <Text style={[
-                        styles.pickerItemText,
-                        pickerMonth === index && { color: '#FFFFFF' }
-                      ]}>
-                        {month}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Year Picker */}
-              <View style={styles.pickerColumn}>
-                <Text style={styles.pickerLabel}>Year</Text>
-                <ScrollView
-                  style={styles.pickerScroll}
-                  showsVerticalScrollIndicator={false}
-                  nestedScrollEnabled={true}
-                >
-                  {datePickerData.years.map((year) => (
-                    <TouchableOpacity
-                      key={year}
-                      style={[
-                        styles.pickerItem,
-                        pickerYear === year && { backgroundColor: Colors.primary }
-                      ]}
-                      onPress={() => setPickerYear(year)}
-                    >
-                      <Text style={[
-                        styles.pickerItemText,
-                        pickerYear === year && { color: '#FFFFFF' }
-                      ]}>
-                        {year}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
+              <PickerColumn
+                label="Day"
+                items={datePickerData.days}
+                selectedItem={pickerDay}
+                onSelect={setPickerDay}
+              />
+              <PickerColumn
+                label="Month"
+                items={datePickerData.months}
+                selectedItem={MONTHS[pickerMonth]}
+                onSelect={(month) => setPickerMonth(MONTHS.indexOf(month as string))}
+              />
+              <PickerColumn
+                label="Year"
+                items={datePickerData.years}
+                selectedItem={pickerYear}
+                onSelect={setPickerYear}
+              />
             </View>
+
+            <TouchableOpacity
+              style={styles.modalConfirmButton}
+              onPress={handleDateSelect}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalConfirmText}>Confirm</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => setShowDatePicker(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
+    </KeyboardAvoidingView>
+  );
+}
+
+function FieldLabel({
+  icon,
+  label,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+}) {
+  return (
+    <View style={styles.fieldLabelRow}>
+      <Ionicons name={icon} size={14} color={PALETTE.primary} />
+      <Text style={styles.fieldLabelText}> {label}</Text>
+    </View>
+  );
+}
+
+function GenderPill({
+  gender,
+  icon,
+  label,
+  isSelected,
+  isLast = false,
+  onPress,
+}: {
+  gender: Gender;
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  isSelected: boolean;
+  isLast?: boolean;
+  onPress: () => void;
+}) {
+  const selectedStyle = {
+    girl: styles.girlPillSelected,
+    boy: styles.boyPillSelected,
+    neutral: styles.neutralPillSelected,
+  }[gender];
+
+  const selectedColor = {
+    girl: PALETTE.primary,
+    boy: PALETTE.boy,
+    neutral: PALETTE.muted,
+  }[gender];
+
+  const unselectedColor = gender === 'neutral' ? PALETTE.lightText : PALETTE.muted;
+
+  return (
+    <TouchableOpacity
+      style={[
+        styles.genderPill,
+        isLast && styles.genderPillLast,
+        isSelected && selectedStyle,
+      ]}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
+      <Ionicons
+        name={icon}
+        size={16}
+        color={isSelected ? selectedColor : PALETTE.lightText}
+      />
+      <Text
+        style={[
+          styles.genderText,
+          { color: isSelected ? selectedColor : unselectedColor },
+        ]}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function PickerColumn<T extends string | number>({
+  label,
+  items,
+  selectedItem,
+  onSelect,
+}: {
+  label: string;
+  items: T[];
+  selectedItem: T;
+  onSelect: (item: T) => void;
+}) {
+  return (
+    <View style={styles.pickerColumn}>
+      <Text style={styles.pickerLabel}>{label}</Text>
+      <ScrollView
+        style={styles.pickerScroll}
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+      >
+        {items.map((item) => {
+          const isSelected = selectedItem === item;
+          return (
+            <TouchableOpacity
+              key={item}
+              style={[styles.pickerItem, isSelected && styles.pickerItemSelected]}
+              onPress={() => onSelect(item)}
+              activeOpacity={0.75}
+            >
+              <Text
+                style={[
+                  styles.pickerItemText,
+                  isSelected && styles.pickerItemTextSelected,
+                ]}
+              >
+                {item}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -334,203 +460,315 @@ export default function SetupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: PALETTE.background,
   },
   scrollView: {
     flex: 1,
+    backgroundColor: PALETTE.background,
   },
-  header: {
+  scrollContent: {
+    flexGrow: 1,
+    backgroundColor: PALETTE.background,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+  },
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.xl,
   },
   backButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFF0E8',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
-    borderWidth: 0.5,
-    borderColor: Colors.primary,
   },
-  headerCenter: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  progressText: {
+  stepText: {
+    color: PALETTE.muted,
     fontSize: 12,
-    color: Colors.lightText,
     fontWeight: '500',
   },
-  headerRight: {
+  topBarSpacer: {
     width: 40,
+    height: 40,
   },
-  content: {
-    paddingHorizontal: Spacing.lg,
+  header: {
+    alignItems: 'center',
+    marginTop: 32,
+    marginBottom: 32,
+  },
+  headerIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: PALETTE.softPeach,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heading: {
+    color: PALETTE.text,
     fontSize: 24,
     fontWeight: '700',
-    color: Colors.text,
-    marginBottom: Spacing.sm,
+    marginTop: 16,
+    textAlign: 'center',
   },
   subtitle: {
+    color: PALETTE.muted,
     fontSize: 14,
-    color: Colors.lightText,
-    marginBottom: Spacing.xl,
-    lineHeight: 20,
+    lineHeight: 22,
+    marginTop: 8,
+    textAlign: 'center',
   },
-  inputSection: {
-    marginBottom: Spacing.xl,
+  formCard: {
+    backgroundColor: PALETTE.card,
+    borderRadius: 24,
+    padding: 24,
+    marginBottom: 24,
+    shadowColor: PALETTE.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.text,
-    marginBottom: Spacing.md,
+  fieldLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
   },
-  dateInput: {
+  genderLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  fieldLabelText: {
+    color: PALETTE.muted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  optionalLabel: {
+    color: PALETTE.lightText,
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  textInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: PALETTE.primary,
+    borderRadius: 12,
+    color: PALETTE.text,
+    fontSize: 15,
+    padding: 14,
+  },
+  namePreview: {
+    color: PALETTE.primary,
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginTop: 6,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: PALETTE.border,
+    marginVertical: 20,
+  },
+  dateButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: PALETTE.primary,
+    borderRadius: 12,
+    padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderRadius: 16,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.lightBorder,
   },
-  dateInputText: {
-    fontSize: 16,
-    fontWeight: '500',
+  dateButtonLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 8,
   },
-  ageDisplay: {
-    fontSize: 14,
-    color: Colors.primary,
-    fontWeight: '600',
-    marginTop: Spacing.sm,
+  dateButtonText: {
+    flex: 1,
+    fontSize: 15,
+    marginLeft: 10,
+  },
+  validationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  validationText: {
+    color: PALETTE.primary,
+    fontSize: 12,
+  },
+  agePill: {
+    alignSelf: 'flex-start',
+    alignItems: 'center',
+    backgroundColor: PALETTE.successBg,
+    borderRadius: 999,
+    flexDirection: 'row',
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  ageText: {
+    color: PALETTE.success,
+    fontSize: 12,
+    fontWeight: '700',
   },
   genderButtons: {
     flexDirection: 'row',
-    gap: Spacing.md,
   },
-  genderButton: {
+  genderPill: {
     flex: 1,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: 16,
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.lightBorder,
-    alignItems: 'center',
-  },
-  genderButtonSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  genderButtonText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: Colors.text,
-  },
-  genderButtonTextSelected: {
-    color: '#FFFFFF',
-  },
-  optionalText: {
-    fontSize: 12,
-    color: Colors.lightText,
-    marginTop: Spacing.sm,
-    fontStyle: 'italic',
-  },
-  buttonContainer: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.lg,
-    backgroundColor: Colors.background,
-  },
-  continueButton: {
-    paddingVertical: Spacing.lg,
-    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 4,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: PALETTE.border,
+    borderRadius: 12,
+    flexDirection: 'row',
+    paddingVertical: 14,
+    marginRight: 8,
   },
-  buttonText: {
+  genderPillLast: {
+    marginRight: 0,
+  },
+  girlPillSelected: {
+    backgroundColor: '#FFE8F0',
+    borderColor: PALETTE.primary,
+    borderWidth: 1.5,
+  },
+  boyPillSelected: {
+    backgroundColor: '#E8F4FF',
+    borderColor: PALETTE.boy,
+    borderWidth: 1.5,
+  },
+  neutralPillSelected: {
+    backgroundColor: PALETTE.border,
+    borderColor: PALETTE.muted,
+    borderWidth: 1.5,
+  },
+  genderText: {
+    fontSize: 14,
+    marginLeft: 6,
+  },
+  continueButton: {
+    alignItems: 'center',
+    backgroundColor: PALETTE.primary,
+    borderRadius: 20,
+    justifyContent: 'center',
+    marginTop: 8,
+    paddingVertical: 18,
+    shadowColor: PALETTE.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  continueContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  continueText: {
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
+    marginLeft: 8,
   },
-  // Modal styles
+  footerNote: {
+    color: PALETTE.lightText,
+    fontSize: 11,
+    marginTop: 12,
+    textAlign: 'center',
+  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     justifyContent: 'flex-end',
   },
-  modalContent: {
+  modalSheet: {
+    backgroundColor: PALETTE.background,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingTop: Spacing.lg,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
+    padding: 24,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
+  dragHandle: {
+    alignSelf: 'center',
+    backgroundColor: '#E0D8D0',
+    borderRadius: 2,
+    height: 4,
+    marginBottom: 20,
+    width: 40,
   },
   modalTitle: {
+    color: PALETTE.text,
     fontSize: 18,
     fontWeight: '700',
-    color: Colors.text,
-  },
-  cancelButton: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.lightText,
-  },
-  confirmButton: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.primary,
+    marginBottom: 20,
+    textAlign: 'center',
   },
   pickerContainer: {
     flexDirection: 'row',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.xl,
   },
   pickerColumn: {
     flex: 1,
     alignItems: 'center',
   },
   pickerLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text,
-    marginBottom: Spacing.sm,
+    color: PALETTE.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 8,
+    textTransform: 'uppercase',
   },
   pickerScroll: {
     height: 200,
     width: '100%',
   },
   pickerItem: {
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    borderRadius: 8,
-    marginVertical: 2,
     alignItems: 'center',
+    borderRadius: 8,
+    marginHorizontal: 4,
+    marginVertical: 2,
+    paddingVertical: 10,
+  },
+  pickerItemSelected: {
+    backgroundColor: PALETTE.primary,
   },
   pickerItemText: {
+    color: PALETTE.text,
     fontSize: 16,
-    fontWeight: '500',
-    color: Colors.text,
+  },
+  pickerItemTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  modalConfirmButton: {
+    alignItems: 'center',
+    backgroundColor: PALETTE.primary,
+    borderRadius: 16,
+    marginTop: 16,
+    padding: 14,
+    width: '100%',
+  },
+  modalConfirmText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modalCancelButton: {
+    alignItems: 'center',
+    backgroundColor: PALETTE.softPeach,
+    borderRadius: 16,
+    marginTop: 8,
+    padding: 14,
+    width: '100%',
+  },
+  modalCancelText: {
+    color: PALETTE.muted,
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

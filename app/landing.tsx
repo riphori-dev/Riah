@@ -6,12 +6,12 @@ import {
   TouchableOpacity,
   StyleSheet,
   Dimensions,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { Colors, Spacing } from '@/constants';
-import RiahLogo from '@/components/RiahLogo';
 
 const { height } = Dimensions.get('window');
 
@@ -35,7 +35,11 @@ export default function LandingScreen() {
 
         {/* Logo */}
         <View style={styles.logoContainer}>
-          <RiahLogo size={140} color={Colors.primary} />
+          <Image
+            source={require('@/assets/duck-logo.png')}
+            style={{ width: 140, height: 140 }}
+            resizeMode="contain"
+          />
         </View>
 
         {/* Spacing */}

@@ -3,7 +3,7 @@
  * Soft, warm, and cozy baby-care aesthetic
  */
 
-export const Colors = {
+export const LightColors = {
   // Primary colors
   background: '#FFF8F4', // Warm white
   primary: '#F4A98A', // Soft coral/peach
@@ -23,3 +23,30 @@ export const Colors = {
   // Shadows
   shadow: 'rgba(74, 55, 40, 0.1)', // Soft warm shadow
 };
+
+export const DarkColors = {
+  // Primary colors
+  background: '#1F1712',
+  primary: '#F4A98A',
+  secondary: '#A8D5BA',
+  accent: '#F9C784',
+  text: '#F8EDE6',
+  card: '#2A211B',
+
+  // Additional utility colors
+  lightText: '#CDBCAD',
+  lightBorder: '#4A3728',
+  success: '#A8D5BA',
+  warning: '#F9C784',
+  error: '#E8B4A8',
+  overlay: 'rgba(0, 0, 0, 0.65)',
+
+  // Shadows
+  shadow: 'rgba(0, 0, 0, 0.28)',
+};
+
+export const Colors = { ...LightColors };
+
+export function applyColorScheme(isDarkMode: boolean) {
+  Object.assign(Colors, isDarkMode ? DarkColors : LightColors);
+}

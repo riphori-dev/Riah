@@ -19,7 +19,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 
-import { Colors, Spacing } from '@/constants';
+import { Colors, Spacing, useTheme } from '@/constants';
 import { diaperLogs, DiaperLog } from '@/db/database';
 import { getTimeAgo } from '@/utils/timeUtils';
 
@@ -39,6 +39,7 @@ interface ToastMessage {
 
 export default function DiaperScreen() {
   const insets = useSafeAreaInsets();
+  const { colors, isDarkMode } = useTheme();
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [lastChange, setLastChange] = useState<DiaperLog | null>(null);
   const [lastChangeTimestamp, setLastChangeTimestamp] = useState<string | null>(null); // Raw ISO timestamp
@@ -119,7 +120,12 @@ export default function DiaperScreen() {
     ).start();
   }, [pulseAnim]);
 
-  const getStatusInfo = (): { color: string; bgColor: string; text: string; icon: string } => {
+  const getStatusInfo = (): {
+    color: string;
+    bgColor: string;
+    text: string;
+    icon: keyof typeof Ionicons.glyphMap;
+  } => {
     if (!lastChange) {
       return {
         color: '#3B6D11',
@@ -237,7 +243,11 @@ export default function DiaperScreen() {
     </TouchableOpacity>
   );
 
-  const getTypeIcon = (type: 'wet' | 'dirty' | 'both') => {
+  const getTypeIcon = (type: 'wet' | 'dirty' | 'both'): {
+    icon: keyof typeof Ionicons.glyphMap;
+    color: string;
+    bgColor: string;
+  } => {
     switch (type) {
       case 'wet':
         return { icon: 'water', color: '#5BA8D4', bgColor: '#EBF7FF' };
@@ -279,22 +289,22 @@ export default function DiaperScreen() {
       >
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top + Spacing.lg }]}>
-          <Text style={styles.headerTitle}>Diaper Tracker</Text>
-          <TouchableOpacity style={styles.historyButton}>
-            <Ionicons name="time-outline" size={22} color={Colors.primary} />
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Diaper Tracker</Text>
+          <TouchableOpacity style={[styles.historyButton, { backgroundColor: isDarkMode ? colors.card : '#FFF0E8' }]}>
+            <Ionicons name="time-outline" size={22} color={colors.primary} />
           </TouchableOpacity>
         </View>
 
         {/* Hero Timer Section */}
-        <View style={styles.heroCard}>
+        <View style={[styles.heroCard, { backgroundColor: isDarkMode ? colors.card : '#FFF0E8' }]}>
           <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-            <View style={styles.waterDropCircle}>
-              <Ionicons name="water" size={64} color={Colors.primary} />
+            <View style={[styles.waterDropCircle, { backgroundColor: isDarkMode ? colors.background : '#FFF0E8' }]}>
+              <Ionicons name="water" size={64} color={colors.primary} />
             </View>
           </Animated.View>
 
-          <Text style={styles.heroLabel}>Last change</Text>
-          <Text style={styles.heroTimer}>{getTimeAgo(lastChangeTimestamp)}</Text>
+          <Text style={[styles.heroLabel, { color: colors.lightText }]}>Last change</Text>
+          <Text style={[styles.heroTimer, { color: colors.text }]}>{getTimeAgo(lastChangeTimestamp)}</Text>
 
           <View style={[styles.statusPill, { backgroundColor: status.bgColor }]}>
             <Ionicons name={status.icon} size={14} color={status.color} />
@@ -304,10 +314,10 @@ export default function DiaperScreen() {
 
         {/* Log Buttons */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Log a change</Text>
+          <Text style={[styles.sectionLabel, { color: colors.lightText }]}>Log a change</Text>
           <View style={styles.buttonRow}>
             <TouchableOpacity
-              style={[styles.logButton, { backgroundColor: '#EBF7FF' }]}
+              style={[styles.logButton, { backgroundColor: isDarkMode ? '#173145' : '#EBF7FF' }]}
               onPress={() => logChange('wet')}
             >
               <Ionicons name="water-outline" size={32} color="#5BA8D4" />
@@ -315,7 +325,7 @@ export default function DiaperScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.logButton, { backgroundColor: '#FFF3E0' }]}
+              style={[styles.logButton, { backgroundColor: isDarkMode ? '#3A2D18' : '#FFF3E0' }]}
               onPress={() => logChange('dirty')}
             >
               <Ionicons name="leaf-outline" size={32} color="#D4845A" />
@@ -323,11 +333,11 @@ export default function DiaperScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.logButton, { backgroundColor: '#FFF0E8' }]}
+              style={[styles.logButton, { backgroundColor: isDarkMode ? '#3A2720' : '#FFF0E8' }]}
               onPress={() => logChange('both')}
             >
-              <Ionicons name="git-merge-outline" size={32} color={Colors.primary} />
-              <Text style={[styles.logButtonLabel, { color: Colors.text }]}>Both</Text>
+              <Ionicons name="git-merge-outline" size={32} color={colors.primary} />
+              <Text style={[styles.logButtonLabel, { color: colors.text }]}>Both</Text>
             </TouchableOpacity>
           </View>
 
@@ -335,7 +345,7 @@ export default function DiaperScreen() {
           {showNotesInput && (
             <View style={styles.notesContainer}>
               <TextInput
-                style={[styles.notesInput, { backgroundColor: '#FFF' }]}
+                style={[styles.notesInput, { backgroundColor: colors.card, color: colors.text }]}
                 placeholder="Add a note (optional)"
                 placeholderTextColor={Colors.lightText}
                 value={notes}
@@ -352,10 +362,10 @@ export default function DiaperScreen() {
                   <Text style={styles.noteButtonText}>Save</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.noteButton, { backgroundColor: Colors.card }]}
+                  style={[styles.noteButton, { backgroundColor: colors.card }]}
                   onPress={skipNote}
                 >
-                  <Text style={[styles.noteButtonText, { color: Colors.text }]}>Skip</Text>
+                  <Text style={[styles.noteButtonText, { color: colors.text }]}>Skip</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -365,29 +375,29 @@ export default function DiaperScreen() {
         {/* Today's Stats */}
         <View style={styles.section}>
           <View style={styles.statsRow}>
-            <View style={[styles.statCard, { backgroundColor: Colors.card }]}>
-              <Ionicons name="repeat-outline" size={16} color={Colors.text} />
-              <Text style={styles.statNumber}>{timersToday.total}</Text>
-              <Text style={styles.statLabel}>changes</Text>
+            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+              <Ionicons name="repeat-outline" size={16} color={colors.text} />
+              <Text style={[styles.statNumber, { color: colors.text }]}>{timersToday.total}</Text>
+              <Text style={[styles.statLabel, { color: colors.lightText }]}>changes</Text>
             </View>
 
-            <View style={[styles.statCard, { backgroundColor: Colors.card }]}>
+            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
               <Ionicons name="water-outline" size={16} color="#185FA5" />
-              <Text style={styles.statNumber}>{timersToday.wet}</Text>
-              <Text style={styles.statLabel}>wet</Text>
+              <Text style={[styles.statNumber, { color: colors.text }]}>{timersToday.wet}</Text>
+              <Text style={[styles.statLabel, { color: colors.lightText }]}>wet</Text>
             </View>
 
-            <View style={[styles.statCard, { backgroundColor: Colors.card }]}>
+            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
               <Ionicons name="leaf-outline" size={16} color="#854F0B" />
-              <Text style={styles.statNumber}>{timersToday.dirty}</Text>
-              <Text style={styles.statLabel}>dirty</Text>
+              <Text style={[styles.statNumber, { color: colors.text }]}>{timersToday.dirty}</Text>
+              <Text style={[styles.statLabel, { color: colors.lightText }]}>dirty</Text>
             </View>
           </View>
         </View>
 
         {/* History */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Recent changes</Text>
+          <Text style={[styles.sectionLabel, { color: colors.lightText }]}>Recent changes</Text>
 
           {history.length === 0 ? (
             <View style={styles.emptyState}>
