@@ -3,5 +3,5 @@
  */
 
 export { Colors } from './Colors';
-export { ThemeProvider, useTheme } from './ThemeContext';
+export { ThemeProvider, useTheme, useThemedStyles } from './ThemeContext';
 export { Spacing, PaddingPresets, MarginPresets } from './Spacing';

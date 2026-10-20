@@ -1,0 +1,23 @@
+name: Feature request
+description: Explain a parent-facing problem and a proposed improvement.
+title: '[Feature] '
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should Riah solve?
+      description: 'Describe a concrete daily-care situation without personal identifiers.'
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+      description: 'Describe the desired journey and how you would know it works.'
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and scope
+      description: 'Existing workarounds, supported platforms and any data/sharing implications. Link a roadmap item if relevant.'

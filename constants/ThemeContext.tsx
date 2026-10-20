@@ -38,9 +38,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setDarkMode = async (enabled: boolean) => {
+    await AsyncStorage.setItem(DARK_MODE_STORAGE_KEY, enabled ? 'true' : 'false');
     applyColorScheme(enabled);
     setIsDarkMode(enabled);
-    await AsyncStorage.setItem(DARK_MODE_STORAGE_KEY, enabled ? 'true' : 'false');
   };
 
   const value = useMemo(
@@ -50,18 +50,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       setDarkMode,
       toggleDarkMode: () => setDarkMode(!isDarkMode),
     }),
-    [isDarkMode]
+    [isDarkMode],
   );
 
   if (!isReady) {
     return null;
   }
 
-  return (
-    <ThemeContext.Provider value={value}>
-      {children}
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme() {
@@ -76,4 +72,9 @@ export function useTheme() {
   }
 
   return context;
+}
+
+export function useThemedStyles<T>(factory: (colors: typeof LightColors) => T): T {
+  const { colors } = useTheme();
+  return useMemo(() => factory(colors), [colors, factory]);
 }

@@ -6,17 +6,22 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --test tests/*.test.cjs",
+    "check": "npm run typecheck && npm test",
+    "export:web": "expo export --platform web",
+    "preview:web": "node scripts/preview-web.cjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@react-native-community/datetimepicker": "^8.4.4",
-    "@react-native-picker/picker": "^2.11.1",
-    "date-fns": "^4.1.0",
+    "@react-native-community/datetimepicker": "8.4.4",
     "expo": "~54.0.33",
     "expo-dev-client": "~6.0.21",
-    "expo-haptics": "^55.0.14",
+    "expo-haptics": "~15.0.8",
     "expo-linking": "~8.0.0",
     "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.23",
@@ -28,14 +33,17 @@
     "react-native-gesture-handler": "~2.28.0",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
-    "react-native-svg": "^15.12.1",
+    "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
-    "wa-sqlite": "^1.0.0",
-    "zustand": "^5.0.13"
+    "wa-sqlite": "^1.0.0"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "prettier": "^3.9.10",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0 <25"
+  }
 }

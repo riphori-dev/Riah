@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { subscribeToDataChanges } from '@/services/dataEvents';
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
+import { Tabs } from 'expo-router';
+import React, { useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '@/constants';
@@ -15,9 +16,7 @@ export default function TabsLayout() {
   const checkLowStock = async () => {
     try {
       const items = await stockItems.getAll();
-      const lowStock = items.some(
-        (item) => item.quantity < item.low_stock_threshold
-      );
+      const lowStock = items.some((item) => item.quantity <= item.low_stock_threshold);
       setHasLowStock(lowStock);
     } catch (error) {
       console.error('Error checking low stock:', error);
@@ -27,7 +26,10 @@ export default function TabsLayout() {
   useFocusEffect(
     React.useCallback(() => {
       checkLowStock();
-    }, [])
+      return subscribeToDataChanges(() => {
+        void checkLowStock();
+      });
+    }, []),
   );
 
   return (
@@ -42,12 +44,14 @@ export default function TabsLayout() {
           borderTopWidth: 1,
           paddingBottom: Math.max(8, insets.bottom),
           paddingTop: 8,
-          height: 60 + insets.bottom,
+          height: 76 + insets.bottom,
         },
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '600',
-          marginTop: -4,
+          marginTop: 0,
+          lineHeight: 16,
+          marginBottom: 4,
         },
       }}
     >
@@ -56,11 +60,7 @@ export default function TabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'home' : 'home-outline'}
-              size={24}
-              color={color}
-            />
+            <Ionicons name={focused ? 'home' : 'home-outline'} size={24} color={color} />
           ),
         }}
       />
@@ -70,11 +70,7 @@ export default function TabsLayout() {
         options={{
           title: 'Diaper',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'water' : 'water-outline'}
-              size={24}
-              color={color}
-            />
+            <Ionicons name={focused ? 'water' : 'water-outline'} size={24} color={color} />
           ),
         }}
       />
@@ -98,11 +94,7 @@ export default function TabsLayout() {
         options={{
           title: 'Sleep',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'moon' : 'moon-outline'}
-              size={24}
-              color={color}
-            />
+            <Ionicons name={focused ? 'moon' : 'moon-outline'} size={24} color={color} />
           ),
         }}
       />
@@ -112,11 +104,7 @@ export default function TabsLayout() {
         options={{
           title: 'Stock',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'cube' : 'cube-outline'}
-              size={24}
-              color={color}
-            />
+            <Ionicons name={focused ? 'cube' : 'cube-outline'} size={24} color={color} />
           ),
           tabBarBadge: hasLowStock ? '!' : undefined,
         }}
@@ -127,11 +115,7 @@ export default function TabsLayout() {
         options={{
           title: 'Appts',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'calendar' : 'calendar-outline'}
-              size={24}
-              color={color}
-            />
+            <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={24} color={color} />
           ),
         }}
       />

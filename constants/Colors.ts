@@ -12,6 +12,19 @@ export const LightColors = {
   text: '#4A3728', // Warm dark brown
   card: '#FFFAF7', // Card background
 
+  successText: '#3B6D11',
+  infoText: '#185FA5',
+  warningText: '#854F0B',
+  dangerText: '#C0392B',
+  softDanger: '#FFE8E8',
+  onPrimary: '#4A3728',
+  action: '#994723',
+  softPrimary: '#FFF0E8',
+  softBlue: '#EBF7FF',
+  softGreen: '#EAF3DE',
+  softYellow: '#FAEEDA',
+  softPurple: '#F0EFFF',
+
   // Additional utility colors
   lightText: '#8B7355', // Lighter brown for secondary text
   lightBorder: '#F0E6E0', // Light border/divider
@@ -32,6 +45,19 @@ export const DarkColors = {
   accent: '#F9C784',
   text: '#F8EDE6',
   card: '#2A211B',
+
+  successText: '#B7DDA1',
+  infoText: '#9DCCEC',
+  warningText: '#F3D192',
+  dangerText: '#FFC2B8',
+  softDanger: '#442421',
+  onPrimary: '#4A3728',
+  action: '#F4A98A',
+  softPrimary: '#3A2720',
+  softBlue: '#173145',
+  softGreen: '#203321',
+  softYellow: '#3A2D18',
+  softPurple: '#29243D',
 
   // Additional utility colors
   lightText: '#CDBCAD',

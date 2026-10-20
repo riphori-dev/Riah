@@ -1,287 +1,165 @@
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getLatestDiaperLog, getLatestFeedingLog, getLowStockItems, getUpcomingAppointments } from '../db/database';
+import { AppState, Platform } from 'react-native';
+import {
+  appointments,
+  babyProfile,
+  getLatestDiaperLog,
+  getLatestFeedingLog,
+  getLowStockItems,
+} from '../db/database';
+import { subscribeToDataChanges } from './dataEvents';
+import { appointmentReminders, Reminder } from '../utils/reminders';
 
-interface StockItem {
-  id: number;
-  name: string;
-  category: string;
-  quantity: number;
-  low_stock_threshold: number;
-  unit: string;
-}
-
-export class NotificationService {
-  private static checkInterval: NodeJS.Timeout | null = null;
-  private static readonly CHECK_INTERVAL = 60 * 60 * 1000; // 60 minutes
+const CHANNEL = 'riah-alerts';
+export default class NotificationService {
+  private static unsubscribe: (() => void) | null = null;
+  private static appState: ReturnType<typeof AppState.addEventListener> | null = null;
+  private static queue: Promise<void> = Promise.resolve();
+  private static timer: ReturnType<typeof setTimeout> | null = null;
 
   static async initialize() {
-    try {
-      // Request permissions
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status !== 'granted') {
-        console.warn('Notification permissions not granted');
-        await AsyncStorage.setItem('notifPermission', status);
-        return;
-      }
-      
-      await AsyncStorage.setItem('notifPermission', 'granted');
-
-      // Set notification handler
-      Notifications.setNotificationHandler({
-        handleNotification: async () => ({
-          shouldShowAlert: true,
-          shouldPlaySound: true,
-          shouldSetBadge: true,
-          shouldShowBanner: true,
-          shouldShowList: true,
-        }),
+    if (Platform.OS === 'web') return;
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+        shouldShowBanner: true,
+        shouldShowList: true,
+      }),
+    });
+    if (Platform.OS === 'android')
+      await Notifications.setNotificationChannelAsync(CHANNEL, {
+        name: 'Riah reminders',
+        importance: Notifications.AndroidImportance.DEFAULT,
       });
-
-      // Configure notification channel for Android
-      await Notifications.setNotificationChannelAsync('riah-alerts', {
-        name: 'Riah Alerts',
-        importance: Notifications.AndroidImportance.HIGH,
-        vibrationPattern: [0, 250, 250, 250],
-        sound: 'default',
+    if (!this.unsubscribe) {
+      this.unsubscribe = subscribeToDataChanges(() => this.refreshSoon());
+      this.appState = AppState.addEventListener('change', (state) => {
+        if (state === 'active') this.refreshSoon();
       });
-
-      // Start background checks
-      this.checkInterval = setInterval(() => {
-        NotificationService.runAllChecks();
-      }, this.CHECK_INTERVAL);
-
-      // Run checks immediately on startup
-      await NotificationService.runAllChecks();
-
-      console.log('Notification service initialized');
-    } catch (error) {
-      console.error('Error initializing notification service:', error);
     }
+    await this.refresh();
   }
 
-  static async runAllChecks() {
-    try {
-      const babyName = await AsyncStorage.getItem('babyName') ?? 'Baby';
-      await Promise.all([
-        this.checkDiaperAlert(babyName),
-        this.checkFeedingAlert(babyName),
-        this.checkStockAlert(),
-        this.checkAppointmentAlert(babyName),
-      ]);
-    } catch (error) {
-      console.error('Error running notification checks:', error);
-    }
+  private static refreshSoon() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      void this.refresh().catch((error) => console.warn('Reminder refresh failed:', error));
+    }, 300);
   }
 
-  static async checkDiaperAlert(babyName: string) {
-    try {
-      const latestLog = await getLatestDiaperLog();
-      
-      if (!latestLog) {
-        // No logs exist, notify after app has been open for 2 hours
-        const appOpenTime = await AsyncStorage.getItem('appOpenTime');
-        if (appOpenTime) {
-          const timeSinceOpen = Date.now() - parseInt(appOpenTime);
-          if (timeSinceOpen >= 2 * 60 * 60 * 1000) {
-            await this.sendNotification('First diaper log 👶', `Don't forget to log ${babyName}'s first diaper change in Riah!`);
-          }
-        }
-        return;
-      }
-
-      const timeSinceLastChange = Date.now() - latestLog.timestamp;
-      const hoursSince = timeSinceLastChange / (1000 * 60 * 60);
-
-      // Check spam prevention
-      const lastNotifTime = await AsyncStorage.getItem('lastDiaperNotif');
-      if (lastNotifTime) {
-        const timeSinceLastNotif = Date.now() - parseInt(lastNotifTime);
-        if (timeSinceLastNotif < 2 * 60 * 60 * 1000) {
-          return; // Don't spam if last notification was less than 2 hours ago
-        }
-      }
-
-      if (hoursSince >= 4) {
-        await this.sendNotification('Diaper change needed! 🚨', `It's been over 4 hours since ${babyName}'s last diaper change. ${babyName} might need attention!`);
-      } else if (hoursSince >= 3) {
-        await this.sendNotification('Diaper check 💧', `It's been 3 hours since ${babyName}'s last diaper change. Time to check!`);
-      }
-
-      // Save notification timestamp
-      await AsyncStorage.setItem('lastDiaperNotif', Date.now().toString());
-    } catch (error) {
-      console.error('Error checking diaper alert:', error);
-    }
+  /** Request permission from explanatory Settings control, never while loading onboarding. */
+  static async enable(): Promise<boolean> {
+    if (Platform.OS === 'web') return false;
+    if (Platform.OS === 'android')
+      await Notifications.setNotificationChannelAsync(CHANNEL, {
+        name: 'Riah reminders',
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
+    const permission = await Notifications.requestPermissionsAsync();
+    if (!permission.granted) return false;
+    await this.initialize();
+    return true;
   }
 
-  static async checkFeedingAlert(babyName: string) {
-    try {
-      const latestLog = await getLatestFeedingLog();
-      
-      if (!latestLog) {
-        // No logs exist, notify after app has been open for 2 hours
-        const appOpenTime = await AsyncStorage.getItem('appOpenTime');
-        if (appOpenTime) {
-          const timeSinceOpen = Date.now() - parseInt(appOpenTime);
-          if (timeSinceOpen >= 2 * 60 * 60 * 1000) {
-            await this.sendNotification('First feeding log 🍼', `Remember to log ${babyName}'s feedings so Riah can track pattern!`);
-          }
-        }
-        return;
-      }
-
-      const timeSinceLastFeed = Date.now() - latestLog.timestamp;
-      const hoursSince = timeSinceLastFeed / (1000 * 60 * 60);
-
-      // Check spam prevention
-      const lastNotifTime = await AsyncStorage.getItem('lastFeedingNotif');
-      if (lastNotifTime) {
-        const timeSinceLastNotif = Date.now() - parseInt(lastNotifTime);
-        if (timeSinceLastNotif < 2 * 60 * 60 * 1000) {
-          return; // Don't spam if last notification was less than 2 hours ago
-        }
-      }
-
-      if (hoursSince >= 3.5) {
-        await this.sendNotification(`${babyName} might be hungry! 🚨`, `It's been over 3.5 hours since ${babyName}'s last feeding. Time to feed!`);
-      } else if (hoursSince >= 2.5) {
-        await this.sendNotification('Feeding time? 🍼', `${babyName} might be getting hungry!`);
-      }
-
-      // Save notification timestamp
-      await AsyncStorage.setItem('lastFeedingNotif', Date.now().toString());
-    } catch (error) {
-      console.error('Error checking feeding alert:', error);
-    }
+  static refresh(): Promise<void> {
+    if (Platform.OS === 'web') return Promise.resolve();
+    this.queue = this.queue.catch(() => {}).then(() => this.reconcile());
+    return this.queue;
   }
 
-  static async checkStockAlert() {
-    try {
-      const lowStockItems = await getLowStockItems();
-      
-      if (lowStockItems.length === 0) {
-        return; // No low stock items
-      }
-
-      // Check spam prevention (only notify once every 12 hours for stock alerts)
-      const lastNotifTime = await AsyncStorage.getItem('lastStockNotif');
-      if (lastNotifTime) {
-        const timeSinceLastNotif = Date.now() - parseInt(lastNotifTime);
-        if (timeSinceLastNotif < 12 * 60 * 60 * 1000) {
-          return; // Don't spam stock notifications
-        }
-      }
-
-      if (lowStockItems.length === 1) {
-        const item: StockItem = lowStockItems[0];
-        await this.sendNotification(
-          `Running low on ${item.name} 📦`,
-          `You have ${item.quantity} ${item.unit} left. Time to restock!`
-        );
-      } else {
-        const itemNames = lowStockItems.map(item => item.name).join(', ');
-        await this.sendNotification(
-          `${lowStockItems.length} items running low 📦`,
-          `Low stock: ${itemNames}. Check your stock in Riah.`
-        );
-      }
-
-      // Save notification timestamp
-      await AsyncStorage.setItem('lastStockNotif', Date.now().toString());
-    } catch (error) {
-      console.error('Error checking stock alert:', error);
-    }
-  }
-
-  static async checkAppointmentAlert(babyName: string) {
-    try {
-      const upcomingAppointments = await getUpcomingAppointments();
-      
-      if (upcomingAppointments.length === 0) {
-        return; // No upcoming appointments
-      }
-
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      
-      for (const appointment of upcomingAppointments) {
-        const appointmentDate = new Date(appointment.date);
-        const daysUntil = Math.floor((appointmentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-        const hoursUntil = (daysUntil * 24) + (appointmentDate.getHours() - now.getHours());
-
-        // Check spam prevention
-        const lastNotifKey = `lastApptNotif_${appointment.id}`;
-        const lastNotifTime = await AsyncStorage.getItem(lastNotifKey);
-        if (lastNotifTime) {
-          const timeSinceLastNotif = Date.now() - parseInt(lastNotifTime);
-          const daysSinceLastNotif = timeSinceLastNotif / (1000 * 60 * 60 * 24);
-          if (daysSinceLastNotif < 1) {
-            continue; // Don't send same appointment notification multiple times
-          }
-        }
-
-        let title = '';
-        let body = '';
-        const formattedDate = appointmentDate.toLocaleDateString('en-US', { 
-          month: 'short', 
-          day: 'numeric', 
-          year: 'numeric' 
+  private static async reconcile() {
+    if (!(await Notifications.getPermissionsAsync()).granted) return;
+    const [profile, allAppointments, diaper, feeding, stock] = await Promise.all([
+      babyProfile.get(),
+      appointments.getAll(),
+      getLatestDiaperLog(),
+      getLatestFeedingLog(),
+      getLowStockItems(),
+    ]);
+    if (!profile) return;
+    const now = Date.now();
+    const desired: Reminder[] = appointmentReminders(allAppointments, now);
+    const opened = Number(await AsyncStorage.getItem('appOpenTime')) || now;
+    for (const [kind, log, hours, screen] of [
+      ['diaper', diaper, 3, '/diaper'],
+      ['feeding', feeding, 2.5, '/feeding'],
+    ] as const) {
+      const at = log ? log.timestamp + hours * 3_600_000 : opened + 2 * 3_600_000;
+      const id = `riah-${kind}-${log?.id ?? 'first'}`;
+      const sent = await AsyncStorage.getItem(id);
+      if (at > now || !sent)
+        desired.push({
+          id,
+          at: Math.max(at, now),
+          screen,
+          title: kind === 'diaper' ? 'Time for a diaper check?' : 'Time for a feeding check?',
+          body: `Check ${profile.name || 'your baby'} and log the next ${kind === 'diaper' ? 'change' : 'feed'} when ready.`,
         });
-        const formattedTime = appointmentDate.toLocaleTimeString('en-US', { 
-          hour: 'numeric', 
-          minute: '2-digit' 
-        });
-
-        if (daysUntil === 7 && Math.abs(hoursUntil) <= 1) {
-          title = 'Appointment next week 📅';
-          body = `${babyName}'s ${appointment.title} with ${appointment.doctor_name || 'doctor'} is in 7 days on ${formattedDate}.`;
-        } else if (daysUntil === 3 && Math.abs(hoursUntil) <= 1) {
-          title = 'Appointment in 3 days 📅';
-          body = `${babyName}'s ${appointment.title} with ${appointment.doctor_name || 'doctor'} on ${formattedDate} at ${formattedTime}.`;
-        } else if (daysUntil === 1 && Math.abs(hoursUntil) <= 1) {
-          title = 'Appointment tomorrow! 📅';
-          body = `${babyName}'s ${appointment.title} is tomorrow at ${formattedTime}.`;
-        } else if (daysUntil === 0 && Math.abs(hoursUntil) <= 1) {
-          title = 'Appointment today! 🏥';
-          body = `${babyName}'s ${appointment.title} is today at ${formattedTime}. Get ready!`;
-        }
-
-        if (title && body) {
-          const finalTitle = appointment.is_vaccine ? `💉 Vaccine: ${title}` : title;
-          await this.sendNotification(finalTitle, body);
-          
-          // Save notification timestamp
-          await AsyncStorage.setItem(lastNotifKey, Date.now().toString());
-        }
-      }
-    } catch (error) {
-      console.error('Error checking appointment alert:', error);
     }
-  }
-
-  static async sendNotification(title: string, body: string) {
-    try {
+    const lastStock = Number(await AsyncStorage.getItem('lastStockNotif')) || 0;
+    if (stock.length && now - lastStock >= 12 * 3_600_000)
+      desired.push({
+        id: 'riah-stock',
+        at: now,
+        screen: '/stock',
+        title: 'Supplies running low',
+        body: stock.map((item) => item.name).join(', '),
+      });
+    const selected = desired.sort((a, b) => a.at - b.at).slice(0, 48);
+    const pending = await Notifications.getAllScheduledNotificationsAsync();
+    const keep = new Set(selected.map((reminder) => reminder.id));
+    for (const request of pending) {
+      if (request.identifier.startsWith('riah-') && !keep.has(request.identifier)) {
+        await Notifications.cancelScheduledNotificationAsync(request.identifier);
+      }
+    }
+    for (const reminder of selected) {
+      const existing = pending.find((request) => request.identifier === reminder.id);
+      if (existing?.content.data?.at === reminder.at && existing.content.body === reminder.body)
+        continue;
       await Notifications.scheduleNotificationAsync({
+        identifier: reminder.id,
         content: {
-          title,
-          body,
+          title: reminder.title,
+          body: reminder.body,
           sound: 'default',
-          priority: Notifications.AndroidNotificationPriority.HIGH,
+          data: { screen: reminder.screen, at: reminder.at },
         },
-        trigger: null, // send immediately
+        trigger:
+          reminder.at <= now
+            ? null
+            : {
+                type: Notifications.SchedulableTriggerInputTypes.DATE,
+                date: new Date(reminder.at),
+                channelId: CHANNEL,
+              },
       });
-    } catch (error) {
-      console.error('Error sending notification:', error);
+      if (reminder.id === 'riah-stock') await AsyncStorage.setItem('lastStockNotif', String(now));
+      else if (!reminder.id.startsWith('riah-appointment-'))
+        await AsyncStorage.setItem(reminder.id, String(reminder.at));
     }
+  }
+
+  static async stopForReset() {
+    this.cleanup();
+    await this.queue.catch(() => {});
+    if (Platform.OS === 'web') return;
+    const pending = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+      pending
+        .filter((item) => item.identifier.startsWith('riah-'))
+        .map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier)),
+    );
   }
 
   static cleanup() {
-    if (this.checkInterval) {
-      clearInterval(this.checkInterval);
-      this.checkInterval = null;
-    }
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    this.appState?.remove();
+    this.appState = null;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
   }
 }
-
-export default NotificationService;

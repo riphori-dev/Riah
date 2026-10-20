@@ -1,26 +1,30 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  Animated,
-  TextInput,
-  FlatList,
-  LayoutAnimation,
-  UIManager,
-  Platform,
-  AppState,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ScreenFeedback from '@/components/ScreenFeedback';
+import { useAction } from '@/hooks/useAction';
+import { useBreastTimers } from '@/hooks/useBreastTimers';
+import { useConfirmDelete } from '@/hooks/useConfirmDelete';
 import { Ionicons } from '@expo/vector-icons';
-import { Swipeable } from 'react-native-gesture-handler';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Animated,
+  AppState,
+  FlatList,
+  LayoutAnimation,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  UIManager,
+  View,
+} from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing } from '@/constants';
-import { feedingLogs, FeedingLog } from '@/db/database';
+import { Spacing, useTheme, useThemedStyles } from '@/constants';
+import { FeedingLog, feedingLogs } from '@/db/database';
 import { getTimeAgo } from '@/utils/timeUtils';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -40,21 +44,30 @@ interface ToastMessage {
 }
 
 export default function FeedingScreen() {
+  const { colors: Colors } = useTheme();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const mutation = useAction();
+  const deletion = useConfirmDelete();
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<FeedingType>('breast');
   const [history, setHistory] = useState<FeedingLog[]>([]);
   const [totalMlToday, setTotalMlToday] = useState(0);
   const [feedCountToday, setFeedCountToday] = useState(0);
   const [lastFeedTimestamp, setLastFeedTimestamp] = useState<string | null>(null); // Raw ISO timestamp
-  const [timerTick, setTimerTick] = useState(0); // Force re-render on timer update
+  const [, setTimerTick] = useState(0);
 
   // Breast feeding state
-  const [breastTimers, setBreastTimers] = useState({
-    left: { running: false, duration: 0 },
-    right: { running: false, duration: 0 },
-  });
+  const {
+    sessionId,
+    breastTimers,
+    ready: timerReady,
+    error: timerError,
+    toggleBreastTimer,
+    resetAll,
+  } = useBreastTimers();
   const [lastBreastSide, setLastBreastSide] = useState<BreastSide | null>(null);
-  const breastTimerIntervals = useRef<{ left?: NodeJS.Timeout; right?: NodeJS.Timeout }>({});
 
   // Bottle state
   const [bottleAmount, setBottleAmount] = useState(0);
@@ -68,35 +81,23 @@ export default function FeedingScreen() {
 
   // UI state
   const [toast, setToast] = useState<ToastMessage>({ id: '', text: '', visible: false });
-  const [tabFadeAnim] = useState(new Animated.Value(1));
   const toastAnim = useRef(new Animated.Value(-100)).current;
-  const statsTimerInterval = useRef<NodeJS.Timeout | null>(null);
+
+  const scrollViewRef = useRef<ScrollView>(null);
 
   // Load data
   const loadData = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
       const logs = await feedingLogs.getRecent(15);
       setHistory(logs);
 
-      // Calculate today's stats
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayMs = today.getTime();
+      const stats = await feedingLogs.getTodayStats();
+      const lastFeed = logs[0];
+      setTotalMlToday(stats.amount);
+      setFeedCountToday(stats.total);
 
-      let totalMl = 0;
-      let feedCount = 0;
-      let lastFeed = logs[0];
-
-      logs.forEach((log) => {
-        if (log.timestamp >= todayMs) {
-          feedCount++;
-          if (log.amount_ml) totalMl += log.amount_ml;
-        }
-      });
-
-      setTotalMlToday(totalMl);
-      setFeedCountToday(feedCount);
-      
       // Store raw timestamp for fresh calculation on every render
       if (lastFeed) {
         setLastFeedTimestamp(new Date(lastFeed.timestamp).toISOString());
@@ -104,23 +105,27 @@ export default function FeedingScreen() {
         setLastFeedTimestamp(null);
       }
     } catch (error) {
-      console.error('Error loading feeding data:', error);
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to load your records. Please try again.',
+      );
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [loadData])
+    }, [loadData]),
   );
 
   // Listen for app state changes - recalculate timers when app comes to foreground
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', nextState => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         // App came back to foreground — recalculate everything immediately
         loadData();
-        setTimerTick(prev => prev + 1); // Force re-render with fresh timer calculations
+        setTimerTick((prev) => prev + 1); // Force re-render with fresh timer calculations
       }
     });
     return () => subscription.remove();
@@ -129,58 +134,11 @@ export default function FeedingScreen() {
   // Update timer every minute (just trigger re-render)
   useEffect(() => {
     const interval = setInterval(() => {
-      setTimerTick(prev => prev + 1);
+      setTimerTick((prev) => prev + 1);
     }, 60000);
 
     return () => clearInterval(interval);
   }, []);
-
-  // Breast timer management
-  const toggleBreastTimer = (side: BreastSide) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    setBreastTimers((prev) => {
-      const newState = { ...prev };
-      const sideState = newState[side];
-
-      if (sideState.running) {
-        // Stop timer
-        if (breastTimerIntervals.current[side]) {
-          clearInterval(breastTimerIntervals.current[side]);
-          delete breastTimerIntervals.current[side];
-        }
-        sideState.running = false;
-      } else {
-        // Start timer
-        sideState.running = true;
-        setLastBreastSide(side);
-        breastTimerIntervals.current[side] = setInterval(() => {
-          setBreastTimers((prev) => ({
-            ...prev,
-            [side]: {
-              ...prev[side],
-              duration: prev[side].duration + 1,
-            },
-          }));
-        }, 1000);
-      }
-
-      return newState;
-    });
-  };
-
-  const resetBreastTimer = (side: BreastSide) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    if (breastTimerIntervals.current[side]) {
-      clearInterval(breastTimerIntervals.current[side]);
-      delete breastTimerIntervals.current[side];
-    }
-    setBreastTimers((prev) => ({
-      ...prev,
-      [side]: { running: false, duration: 0 },
-    }));
-  };
 
   const formatDuration = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -195,11 +153,27 @@ export default function FeedingScreen() {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    const dateStr = date.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
-    const todayStr = today.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
-    const yesterdayStr = yesterday.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    const dateStr = date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const todayStr = today.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const yesterdayStr = yesterday.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
 
-    const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const timeStr = date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
 
     if (dateStr === todayStr) {
       return `Today at ${timeStr}`;
@@ -235,65 +209,57 @@ export default function FeedingScreen() {
 
   // Save feeding
   const handleSaveFeeding = async () => {
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      const timestamp = Date.now();
-      let duration = null;
-      let amount = null;
+    const timestamp = Date.now();
+    let duration = null;
+    let amount = null;
 
-      if (activeTab === 'breast') {
-        const totalDuration = breastTimers.left.duration + breastTimers.right.duration;
-        if (totalDuration === 0) {
-          showToast('Please start a timer');
-          return;
-        }
-        duration = Math.round(totalDuration / 60);
-      } else if (activeTab === 'bottle') {
-        if (bottleAmount === 0) {
-          showToast('Please enter an amount');
-          return;
-        }
-        amount = getBottleAmountInMl();
-      } else if (activeTab === 'solids') {
-        if (!solidsFood.trim()) {
-          showToast('Please enter a food name');
-          return;
-        }
+    if (activeTab === 'breast') {
+      const totalDuration = breastTimers.left.duration + breastTimers.right.duration;
+      if (totalDuration === 0) {
+        throw new Error('Please start a timer.');
       }
-
-      await feedingLogs.insert(
-        timestamp,
-        activeTab,
-        amount,
-        duration,
-        activeTab === 'solids'
-          ? `${solidsFood}${solidsAmount ? ', ' + solidsAmount : ''}${solidsNotes ? '. ' + solidsNotes : ''}`
-          : activeTab === 'bottle'
-            ? getBottleNote()
-            : ''
-      );
-
-      // Reset forms
-      if (activeTab === 'breast') {
-        resetBreastTimer('left');
-        resetBreastTimer('right');
-      } else if (activeTab === 'bottle') {
-        setBottleAmount(0);
-        setBottleUnit('ml');
-        setBottleMilkType('formula');
-      } else {
-        setSolidsFood('');
-        setSolidsAmount('');
-        setSolidsNotes('');
+      duration = Math.max(1, Math.round(totalDuration / 60));
+    } else if (activeTab === 'bottle') {
+      if (!Number.isFinite(bottleAmount) || bottleAmount <= 0) {
+        throw new Error('Please enter an amount.');
       }
-
-      showToast('Feeding logged!');
-      await loadData();
-    } catch (error) {
-      console.error('Error saving feeding:', error);
-      showToast('Error saving feeding');
+      amount = getBottleAmountInMl();
+    } else if (activeTab === 'solids') {
+      if (!solidsFood.trim()) {
+        throw new Error('Please enter a food name.');
+      }
     }
+
+    await feedingLogs.insert(
+      timestamp,
+      activeTab,
+      amount,
+      duration,
+      activeTab === 'solids'
+        ? `${solidsFood}${solidsAmount ? ', ' + solidsAmount : ''}${solidsNotes ? '. ' + solidsNotes : ''}`
+        : activeTab === 'bottle'
+          ? getBottleNote()
+          : '',
+      activeTab === 'breast' ? sessionId : null,
+    );
+
+    // Reset forms
+    if (activeTab === 'breast') {
+      await resetAll();
+    } else if (activeTab === 'bottle') {
+      setBottleAmount(0);
+      setBottleUnit('ml');
+      setBottleMilkType('formula');
+    } else {
+      setSolidsFood('');
+      setSolidsAmount('');
+      setSolidsNotes('');
+    }
+
+    showToast('Feeding logged!');
+    await loadData();
   };
 
   // Delete entry
@@ -302,17 +268,26 @@ export default function FeedingScreen() {
       await feedingLogs.deleteById(id);
       await loadData();
     } catch (error) {
-      console.error('Error deleting feeding log:', error);
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to save changes. Please try again.',
+      );
     }
   };
 
   const renderRightActions = (id: number) => (
-    <TouchableOpacity style={styles.deleteAction} onPress={() => handleDelete(id)}>
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel="Delete this record"
+      style={styles.deleteAction}
+      onPress={() => deletion.ask(() => handleDelete(id))}
+    >
       <Ionicons name="trash-outline" size={20} color="white" />
     </TouchableOpacity>
   );
 
-  const getTypeInfo = (type: FeedingType): {
+  const getTypeInfo = (
+    type: FeedingType,
+  ): {
     icon: keyof typeof Ionicons.glyphMap;
     bgColor: string;
     color: string;
@@ -321,20 +296,20 @@ export default function FeedingScreen() {
       case 'breast':
         return {
           icon: 'heart',
-          bgColor: '#FFF0E8',
+          bgColor: Colors.softPrimary,
           color: '#F4A98A',
         };
       case 'bottle':
         return {
           icon: 'water',
-          bgColor: '#EBF7FF',
+          bgColor: Colors.softBlue,
           color: '#5BA8D4',
         };
       case 'solids':
         return {
           icon: 'leaf',
-          bgColor: '#EAF3DE',
-          color: '#3B6D11',
+          bgColor: Colors.softGreen,
+          color: Colors.successText,
         };
     }
   };
@@ -353,9 +328,7 @@ export default function FeedingScreen() {
   };
 
   const getBottleNote = (): string => {
-    return bottleUnit === 'oz'
-      ? `${bottleMilkType} · ${bottleAmount} oz`
-      : bottleMilkType;
+    return bottleUnit === 'oz' ? `${bottleMilkType} · ${bottleAmount} oz` : bottleMilkType;
   };
 
   const getBottleDisplayAmount = (item: FeedingLog): string => {
@@ -374,18 +347,28 @@ export default function FeedingScreen() {
   return (
     <View style={[styles.container, { backgroundColor: Colors.background }]}>
       <ScrollView
+        ref={scrollViewRef}
         style={styles.scrollView}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
-        {/* Header */}
+        <ScreenFeedback
+          loading={loading}
+          error={loadError || mutation.error || timerError}
+          onRetry={loadError ? () => loadData() : undefined}
+        />
+
         <View style={[styles.header, { paddingTop: insets.top + Spacing.lg }]}>
           <Text style={styles.headerTitle}>Feeding Tracker</Text>
-          <TouchableOpacity style={styles.historyButton}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="View recent feedings"
+            style={styles.historyButton}
+            onPress={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+          >
             <Ionicons name="time-outline" size={22} color={Colors.primary} />
           </TouchableOpacity>
         </View>
 
-        {/* Daily Summary Bar */}
         <View style={styles.summaryBar}>
           <View style={[styles.summaryCard, { backgroundColor: Colors.card }]}>
             <Ionicons name="beaker-outline" size={18} color={Colors.primary} />
@@ -406,7 +389,6 @@ export default function FeedingScreen() {
           </View>
         </View>
 
-        {/* Tab Bar */}
         <View style={[styles.tabBar, { backgroundColor: Colors.card }]}>
           {(['breast', 'bottle', 'solids'] as const).map((tab) => {
             const isActive = activeTab === tab;
@@ -417,13 +399,18 @@ export default function FeedingScreen() {
               solids: 'leaf-outline',
             };
             const tabColors = {
-              breast: { active: '#F4A98A', bg: '#FFF0E8', border: '#F4A98A' },
-              bottle: { active: '#185FA5', bg: '#EBF7FF', border: '#185FA5' },
-              solids: { active: '#3B6D11', bg: '#EAF3DE', border: '#3B6D11' },
+              breast: { active: '#F4A98A', bg: Colors.softPrimary, border: '#F4A98A' },
+              bottle: { active: Colors.infoText, bg: Colors.softBlue, border: Colors.infoText },
+              solids: {
+                active: Colors.successText,
+                bg: Colors.softGreen,
+                border: Colors.successText,
+              },
             };
 
             return (
               <TouchableOpacity
+                accessibilityRole="button"
                 key={tab}
                 style={[
                   styles.tabButton,
@@ -440,7 +427,9 @@ export default function FeedingScreen() {
                   size={20}
                   color={isActive ? tabColors[tab].active : '#C4B5A8'}
                 />
-                <Text style={[styles.tabLabel, { color: isActive ? tabColors[tab].active : '#C4B5A8' }]}>
+                <Text
+                  style={[styles.tabLabel, { color: isActive ? tabColors[tab].active : '#C4B5A8' }]}
+                >
                   {tabLabels[tab]}
                 </Text>
               </TouchableOpacity>
@@ -448,70 +437,120 @@ export default function FeedingScreen() {
           })}
         </View>
 
-        {/* Tab Content */}
         <View style={styles.contentContainer}>
           {activeTab === 'breast' && (
             <View>
-              {/* Left Timer */}
               <View style={[styles.breastCard, { backgroundColor: Colors.card }]}>
                 <View style={styles.breastHeader}>
                   <Ionicons name="arrow-back-circle-outline" size={24} color={Colors.primary} />
                   <Text style={styles.breastSideLabel}>Left</Text>
                 </View>
-                <Text style={styles.timerDisplay}>{formatDuration(breastTimers.left.duration)}</Text>
+                <Text style={styles.timerDisplay}>
+                  {formatDuration(breastTimers.left.duration)}
+                </Text>
                 <TouchableOpacity
+                  accessibilityRole="button"
                   style={[
                     styles.timerToggleButton,
-                    { backgroundColor: breastTimers.left.running ? '#FFE8E8' : Colors.primary },
+                    {
+                      backgroundColor: breastTimers.left.running
+                        ? Colors.softDanger
+                        : Colors.primary,
+                    },
                   ]}
-                  onPress={() => toggleBreastTimer('left')}
+                  accessibilityLabel={
+                    breastTimers.left.running
+                      ? 'Pause left feeding timer'
+                      : 'Start left feeding timer'
+                  }
+                  disabled={!timerReady}
+                  onPress={() =>
+                    mutation.run(async () => {
+                      await toggleBreastTimer('left');
+                      setLastBreastSide('left');
+                    })
+                  }
                 >
                   <Ionicons
                     name={breastTimers.left.running ? 'stop' : 'play'}
                     size={14}
-                    color={breastTimers.left.running ? '#C0392B' : 'white'}
+                    color={breastTimers.left.running ? Colors.dangerText : 'white'}
                   />
-                  <Text style={[styles.timerButtonText, { color: breastTimers.left.running ? '#C0392B' : 'white' }]}>
+                  <Text
+                    style={[
+                      styles.timerButtonText,
+                      { color: breastTimers.left.running ? Colors.dangerText : Colors.onPrimary },
+                    ]}
+                  >
                     {breastTimers.left.running ? 'Stop' : 'Start'}
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Right Timer */}
               <View style={[styles.breastCard, { backgroundColor: Colors.card }]}>
                 <View style={styles.breastHeader}>
                   <Ionicons name="arrow-forward-circle-outline" size={24} color="#5BA8D4" />
                   <Text style={styles.breastSideLabel}>Right</Text>
                 </View>
-                <Text style={styles.timerDisplay}>{formatDuration(breastTimers.right.duration)}</Text>
+                <Text style={styles.timerDisplay}>
+                  {formatDuration(breastTimers.right.duration)}
+                </Text>
                 <TouchableOpacity
+                  accessibilityRole="button"
                   style={[
                     styles.timerToggleButton,
-                    { backgroundColor: breastTimers.right.running ? '#FFE8E8' : '#185FA5' },
+                    {
+                      backgroundColor: breastTimers.right.running
+                        ? Colors.softDanger
+                        : Colors.infoText,
+                    },
                   ]}
-                  onPress={() => toggleBreastTimer('right')}
+                  accessibilityLabel={
+                    breastTimers.right.running
+                      ? 'Pause right feeding timer'
+                      : 'Start right feeding timer'
+                  }
+                  disabled={!timerReady}
+                  onPress={() =>
+                    mutation.run(async () => {
+                      await toggleBreastTimer('right');
+                      setLastBreastSide('right');
+                    })
+                  }
                 >
                   <Ionicons
                     name={breastTimers.right.running ? 'stop' : 'play'}
                     size={14}
-                    color={breastTimers.right.running ? '#C0392B' : 'white'}
+                    color={breastTimers.right.running ? Colors.dangerText : 'white'}
                   />
-                  <Text style={[styles.timerButtonText, { color: breastTimers.right.running ? '#C0392B' : 'white' }]}>
+                  <Text
+                    style={[
+                      styles.timerButtonText,
+                      { color: breastTimers.right.running ? Colors.dangerText : 'white' },
+                    ]}
+                  >
                     {breastTimers.right.running ? 'Stop' : 'Start'}
                   </Text>
                 </TouchableOpacity>
               </View>
 
               {lastBreastSide && (
-                <Text style={styles.lastSideText}>Last side: {lastBreastSide === 'left' ? 'Left' : 'Right'}</Text>
+                <Text style={styles.lastSideText}>
+                  Last side: {lastBreastSide === 'left' ? 'Left' : 'Right'}
+                </Text>
               )}
 
               <TouchableOpacity
+                accessibilityRole="button"
                 style={[styles.saveButton, { backgroundColor: Colors.primary }]}
-                onPress={handleSaveFeeding}
+                disabled={mutation.pending}
+                accessibilityState={{ busy: mutation.pending }}
+                onPress={() => mutation.run(handleSaveFeeding)}
               >
                 <Ionicons name="checkmark-circle-outline" size={18} color="white" />
-                <Text style={styles.saveButtonText}>Save Feeding</Text>
+                <Text style={styles.saveButtonText}>
+                  {mutation.pending ? 'Saving…' : 'Save feeding'}
+                </Text>
               </TouchableOpacity>
             </View>
           )}
@@ -520,11 +559,14 @@ export default function FeedingScreen() {
             <View>
               <View style={[styles.bottleCard, { backgroundColor: Colors.card }]}>
                 <Text style={styles.bottleLabel}>Amount</Text>
-                <Text style={styles.amountDisplay}>{bottleAmount} {bottleUnit}</Text>
+                <Text style={styles.amountDisplay}>
+                  {bottleAmount} {bottleUnit}
+                </Text>
 
                 <View style={styles.unitToggleContainer}>
                   {(['ml', 'oz'] as const).map((unit) => (
                     <TouchableOpacity
+                      accessibilityRole="button"
                       key={unit}
                       style={[
                         styles.unitTogglePill,
@@ -548,10 +590,10 @@ export default function FeedingScreen() {
                   ))}
                 </View>
 
-                {/* Quick add pills */}
                 <View style={styles.quickPillsRow}>
                   {(bottleUnit === 'ml' ? [10, 30, 50, 100] : [1, 2, 4, 6]).map((amount) => (
                     <TouchableOpacity
+                      accessibilityRole="button"
                       key={amount}
                       style={styles.quickPill}
                       onPress={() => {
@@ -559,14 +601,17 @@ export default function FeedingScreen() {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       }}
                     >
-                      <Text style={styles.quickPillText}>+{amount}{bottleUnit}</Text>
+                      <Text style={styles.quickPillText}>
+                        +{amount}
+                        {bottleUnit}
+                      </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
 
-                {/* Manual input */}
                 <TextInput
                   style={[styles.manualInput, { borderColor: Colors.primary }]}
+                  accessibilityLabel={`Bottle amount in ${bottleUnit}`}
                   placeholder="Or type amount manually"
                   placeholderTextColor={Colors.lightText}
                   keyboardType="decimal-pad"
@@ -574,10 +619,10 @@ export default function FeedingScreen() {
                   onChangeText={(text) => setBottleAmount(parseFloat(text) || 0)}
                 />
 
-                {/* Milk type toggle */}
                 <Text style={styles.bottleTypeLabel}>Milk type</Text>
                 <View style={styles.milkTypeRow}>
                   <TouchableOpacity
+                    accessibilityRole="button"
                     style={[
                       styles.milkTypePill,
                       bottleMilkType === 'formula' && { backgroundColor: Colors.primary },
@@ -597,6 +642,7 @@ export default function FeedingScreen() {
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
+                    accessibilityRole="button"
                     style={[
                       styles.milkTypePill,
                       bottleMilkType === 'breast milk' && { backgroundColor: Colors.primary },
@@ -619,11 +665,16 @@ export default function FeedingScreen() {
               </View>
 
               <TouchableOpacity
+                accessibilityRole="button"
                 style={[styles.saveButton, { backgroundColor: Colors.primary }]}
-                onPress={handleSaveFeeding}
+                disabled={mutation.pending}
+                accessibilityState={{ busy: mutation.pending }}
+                onPress={() => mutation.run(handleSaveFeeding)}
               >
                 <Ionicons name="checkmark-circle-outline" size={18} color="white" />
-                <Text style={styles.saveButtonText}>Save Feeding</Text>
+                <Text style={styles.saveButtonText}>
+                  {mutation.pending ? 'Saving…' : 'Save feeding'}
+                </Text>
               </TouchableOpacity>
             </View>
           )}
@@ -633,6 +684,7 @@ export default function FeedingScreen() {
               <View style={[styles.solidsCard, { backgroundColor: Colors.card }]}>
                 <Text style={styles.inputLabel}>Food name</Text>
                 <TextInput
+                  accessibilityLabel="Food name"
                   style={[styles.textInput, { borderColor: Colors.primary }]}
                   placeholder="e.g. Mashed banana"
                   placeholderTextColor={Colors.lightText}
@@ -642,6 +694,7 @@ export default function FeedingScreen() {
 
                 <Text style={styles.inputLabel}>Amount</Text>
                 <TextInput
+                  accessibilityLabel="Food amount"
                   style={[styles.textInput, { borderColor: Colors.primary }]}
                   placeholder="e.g. 3 tablespoons"
                   placeholderTextColor={Colors.lightText}
@@ -651,6 +704,7 @@ export default function FeedingScreen() {
 
                 <Text style={styles.inputLabel}>Notes</Text>
                 <TextInput
+                  accessibilityLabel="Feeding notes"
                   style={[styles.textInput, { borderColor: Colors.primary, minHeight: 80 }]}
                   placeholder="Any reactions or observations..."
                   placeholderTextColor={Colors.lightText}
@@ -662,25 +716,36 @@ export default function FeedingScreen() {
               </View>
 
               <TouchableOpacity
+                accessibilityRole="button"
                 style={[styles.saveButton, { backgroundColor: Colors.primary }]}
-                onPress={handleSaveFeeding}
+                disabled={mutation.pending}
+                accessibilityState={{ busy: mutation.pending }}
+                onPress={() => mutation.run(handleSaveFeeding)}
               >
                 <Ionicons name="checkmark-circle-outline" size={18} color="white" />
-                <Text style={styles.saveButtonText}>Save Feeding</Text>
+                <Text style={styles.saveButtonText}>
+                  {mutation.pending ? 'Saving…' : 'Save feeding'}
+                </Text>
               </TouchableOpacity>
             </View>
           )}
         </View>
 
-        {/* History */}
         <View style={styles.historySection}>
           <Text style={styles.sectionLabel}>Recent feedings</Text>
 
           {history.length === 0 ? (
             <View style={styles.emptyState}>
-              <Ionicons name="restaurant-outline" size={64} color={Colors.primary} style={{ opacity: 0.4 }} />
+              <Ionicons
+                name="restaurant-outline"
+                size={64}
+                color={Colors.primary}
+                style={{ opacity: 0.4 }}
+              />
               <Text style={styles.emptyStateTitle}>No feedings logged yet</Text>
-              <Text style={styles.emptyStateSubtext}>Use the tabs above to log your first feeding</Text>
+              <Text style={styles.emptyStateSubtext}>
+                Use the tabs above to log your first feeding
+              </Text>
             </View>
           ) : (
             <FlatList
@@ -704,9 +769,7 @@ export default function FeedingScreen() {
                         </Text>
                         <Text style={styles.historyTime}>{formatHistoryTime(item.timestamp)}</Text>
                         {item.type === 'breast' && item.duration_minutes && (
-                          <Text style={styles.historyDetails}>
-                            {item.duration_minutes}m total
-                          </Text>
+                          <Text style={styles.historyDetails}>{item.duration_minutes}m total</Text>
                         )}
                         {item.type === 'bottle' && item.amount_ml && (
                           <Text style={styles.historyDetails}>
@@ -739,7 +802,6 @@ export default function FeedingScreen() {
         </View>
       </ScrollView>
 
-      {/* Toast */}
       {toast.visible && (
         <Animated.View
           style={[
@@ -753,399 +815,401 @@ export default function FeedingScreen() {
           <Text style={styles.toastText}>{toast.text}</Text>
         </Animated.View>
       )}
+      {deletion.dialog}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.lg,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  historyButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFF0E8',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 0.5,
-    borderColor: Colors.primary,
-  },
-  summaryBar: {
-    flexDirection: 'row',
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.xl,
-    gap: Spacing.md,
-  },
-  summaryCard: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    borderRadius: 16,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  summaryNumber: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: Colors.text,
-    marginTop: Spacing.sm,
-  },
-  summaryLabel: {
-    fontSize: 11,
-    color: '#8C7B6E',
-    fontWeight: '600',
-    marginTop: Spacing.xs,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.xl,
-    borderRadius: 16,
-    padding: 4,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  tabButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    borderRadius: 12,
-    gap: Spacing.xs,
-  },
-  tabLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  contentContainer: {
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.xl,
-  },
-  breastCard: {
-    borderRadius: 20,
-    padding: Spacing.xl,
-    marginBottom: Spacing.lg,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  breastHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: Spacing.lg,
-    gap: Spacing.md,
-  },
-  breastSideLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  timerDisplay: {
-    fontSize: 48,
-    fontWeight: '700',
-    color: Colors.text,
-    textAlign: 'center',
-    marginBottom: Spacing.lg,
-  },
-  timerToggleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    borderRadius: 12,
-    gap: Spacing.sm,
-  },
-  timerButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  lastSideText: {
-    fontSize: 12,
-    color: '#8C7B6E',
-    marginBottom: Spacing.lg,
-  },
-  bottleCard: {
-    borderRadius: 20,
-    padding: Spacing.xl,
-    marginBottom: Spacing.lg,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  bottleLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: Spacing.md,
-  },
-  amountDisplay: {
-    fontSize: 48,
-    fontWeight: '700',
-    color: Colors.text,
-    textAlign: 'center',
-    marginBottom: Spacing.lg,
-  },
-  unitToggleContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#EBF7FF',
-    borderRadius: 16,
-    padding: 4,
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: '#D7ECFA',
-  },
-  unitTogglePill: {
-    flex: 1,
-    borderRadius: 12,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  unitTogglePillActive: {
-    backgroundColor: '#185FA5',
-    shadowColor: '#185FA5',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.14,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  unitToggleText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#185FA5',
-  },
-  unitToggleTextActive: {
-    color: 'white',
-  },
-  quickPillsRow: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginBottom: Spacing.lg,
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  quickPill: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: '#FFF0E8',
-    borderRadius: 999,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    alignItems: 'center',
-  },
-  quickPillText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.primary,
-  },
-  manualInput: {
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: Spacing.md,
-    fontSize: 14,
-    color: Colors.text,
-    marginBottom: Spacing.lg,
-    textAlign: 'center',
-  },
-  bottleTypeLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: Spacing.md,
-  },
-  milkTypeRow: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-  },
-  milkTypePill: {
-    flex: 1,
-    backgroundColor: '#FFF0E8',
-    borderRadius: 999,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    alignItems: 'center',
-  },
-  milkTypeText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  solidsCard: {
-    borderRadius: 20,
-    padding: Spacing.xl,
-    marginBottom: Spacing.lg,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: Spacing.md,
-  },
-  textInput: {
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: Spacing.md,
-    fontSize: 14,
-    color: Colors.text,
-    marginBottom: Spacing.lg,
-    textAlignVertical: 'top',
-  },
-  saveButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.lg,
-    borderRadius: 16,
-    gap: Spacing.md,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  saveButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: 'white',
-  },
-  historySection: {
-    paddingHorizontal: Spacing.lg,
-  },
-  sectionLabel: {
-    fontSize: 11,
-    color: '#8C7B6E',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: Spacing.md,
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyStateTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-    marginTop: Spacing.lg,
-  },
-  emptyStateSubtext: {
-    fontSize: 13,
-    color: '#8C7B6E',
-    marginTop: Spacing.sm,
-  },
-  historyCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: 16,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-    marginBottom: Spacing.sm,
-  },
-  historyTypeIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: Spacing.md,
-  },
-  historyInfo: {
-    flex: 1,
-  },
-  historyType: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  historyTime: {
-    fontSize: 12,
-    color: '#8C7B6E',
-    marginTop: Spacing.xs,
-  },
-  historyDetails: {
-    fontSize: 11,
-    color: '#8C7B6E',
-    marginTop: Spacing.xs,
-  },
-  amountPill: {
-    backgroundColor: '#FFF0E8',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  amountPillText: {
-    fontSize: 11,
-    color: '#8C7B6E',
-    fontWeight: '600',
-  },
-  deleteAction: {
-    backgroundColor: '#E8542F',
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: 80,
-    borderRadius: 16,
-    marginLeft: Spacing.sm,
-  },
-  toast: {
-    position: 'absolute',
-    bottom: 40,
-    left: Spacing.lg,
-    right: Spacing.lg,
-    backgroundColor: '#3B6D11',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderRadius: 999,
-    gap: Spacing.md,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  toastText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-});
+const createStyles = (Colors: typeof import('@/constants').Colors) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+    },
+    scrollView: {
+      flex: 1,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: Spacing.lg,
+      paddingBottom: Spacing.lg,
+    },
+    headerTitle: {
+      fontSize: 22,
+      fontWeight: '700',
+      color: Colors.text,
+    },
+    historyButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: Colors.softPrimary,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 0.5,
+      borderColor: Colors.primary,
+    },
+    summaryBar: {
+      flexDirection: 'row',
+      paddingHorizontal: Spacing.lg,
+      marginBottom: Spacing.xl,
+      gap: Spacing.md,
+    },
+    summaryCard: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: Spacing.md,
+      borderRadius: 16,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    summaryNumber: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: Colors.text,
+      marginTop: Spacing.sm,
+    },
+    summaryLabel: {
+      fontSize: 11,
+      color: Colors.lightText,
+      fontWeight: '600',
+      marginTop: Spacing.xs,
+    },
+    tabBar: {
+      flexDirection: 'row',
+      marginHorizontal: Spacing.lg,
+      marginBottom: Spacing.xl,
+      borderRadius: 16,
+      padding: 4,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    tabButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: Spacing.md,
+      paddingHorizontal: Spacing.sm,
+      borderRadius: 12,
+      gap: Spacing.xs,
+    },
+    tabLabel: {
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    contentContainer: {
+      paddingHorizontal: Spacing.lg,
+      marginBottom: Spacing.xl,
+    },
+    breastCard: {
+      borderRadius: 20,
+      padding: Spacing.xl,
+      marginBottom: Spacing.lg,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    breastHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: Spacing.lg,
+      gap: Spacing.md,
+    },
+    breastSideLabel: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: Colors.text,
+    },
+    timerDisplay: {
+      fontSize: 48,
+      fontWeight: '700',
+      color: Colors.text,
+      textAlign: 'center',
+      marginBottom: Spacing.lg,
+    },
+    timerToggleButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: Spacing.md,
+      borderRadius: 12,
+      gap: Spacing.sm,
+    },
+    timerButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    lastSideText: {
+      fontSize: 12,
+      color: Colors.lightText,
+      marginBottom: Spacing.lg,
+    },
+    bottleCard: {
+      borderRadius: 20,
+      padding: Spacing.xl,
+      marginBottom: Spacing.lg,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    bottleLabel: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: Colors.text,
+      marginBottom: Spacing.md,
+    },
+    amountDisplay: {
+      fontSize: 48,
+      fontWeight: '700',
+      color: Colors.text,
+      textAlign: 'center',
+      marginBottom: Spacing.lg,
+    },
+    unitToggleContainer: {
+      flexDirection: 'row',
+      backgroundColor: Colors.softBlue,
+      borderRadius: 16,
+      padding: 4,
+      marginBottom: Spacing.lg,
+      borderWidth: 1,
+      borderColor: '#D7ECFA',
+    },
+    unitTogglePill: {
+      flex: 1,
+      borderRadius: 12,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    unitTogglePillActive: {
+      backgroundColor: Colors.infoText,
+      shadowColor: Colors.infoText,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.14,
+      shadowRadius: 6,
+      elevation: 2,
+    },
+    unitToggleText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: Colors.infoText,
+    },
+    unitToggleTextActive: {
+      color: 'white',
+    },
+    quickPillsRow: {
+      flexDirection: 'row',
+      gap: Spacing.md,
+      marginBottom: Spacing.lg,
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+    },
+    quickPill: {
+      flex: 1,
+      minWidth: '45%',
+      backgroundColor: Colors.softPrimary,
+      borderRadius: 999,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: Spacing.sm,
+      alignItems: 'center',
+    },
+    quickPillText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: Colors.primary,
+    },
+    manualInput: {
+      borderRadius: 12,
+      borderWidth: 1,
+      padding: Spacing.md,
+      fontSize: 14,
+      color: Colors.text,
+      marginBottom: Spacing.lg,
+      textAlign: 'center',
+    },
+    bottleTypeLabel: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: Colors.text,
+      marginBottom: Spacing.md,
+    },
+    milkTypeRow: {
+      flexDirection: 'row',
+      gap: Spacing.md,
+    },
+    milkTypePill: {
+      flex: 1,
+      backgroundColor: Colors.softPrimary,
+      borderRadius: 999,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: Spacing.sm,
+      alignItems: 'center',
+    },
+    milkTypeText: {
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    solidsCard: {
+      borderRadius: 20,
+      padding: Spacing.xl,
+      marginBottom: Spacing.lg,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    inputLabel: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: Colors.text,
+      marginBottom: Spacing.md,
+    },
+    textInput: {
+      borderRadius: 12,
+      borderWidth: 1,
+      padding: Spacing.md,
+      fontSize: 14,
+      color: Colors.text,
+      marginBottom: Spacing.lg,
+      textAlignVertical: 'top',
+    },
+    saveButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: Spacing.lg,
+      borderRadius: 16,
+      gap: Spacing.md,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    saveButtonText: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: Colors.onPrimary,
+    },
+    historySection: {
+      paddingHorizontal: Spacing.lg,
+    },
+    sectionLabel: {
+      fontSize: 11,
+      color: Colors.lightText,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginBottom: Spacing.md,
+    },
+    emptyState: {
+      alignItems: 'center',
+      paddingVertical: 60,
+    },
+    emptyStateTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: Colors.text,
+      marginTop: Spacing.lg,
+    },
+    emptyStateSubtext: {
+      fontSize: 13,
+      color: Colors.lightText,
+      marginTop: Spacing.sm,
+    },
+    historyCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: Spacing.lg,
+      paddingHorizontal: Spacing.lg,
+      borderRadius: 16,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+      marginBottom: Spacing.sm,
+    },
+    historyTypeIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: Spacing.md,
+    },
+    historyInfo: {
+      flex: 1,
+    },
+    historyType: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: Colors.text,
+    },
+    historyTime: {
+      fontSize: 12,
+      color: Colors.lightText,
+      marginTop: Spacing.xs,
+    },
+    historyDetails: {
+      fontSize: 11,
+      color: Colors.lightText,
+      marginTop: Spacing.xs,
+    },
+    amountPill: {
+      backgroundColor: Colors.softPrimary,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    amountPillText: {
+      fontSize: 11,
+      color: Colors.lightText,
+      fontWeight: '600',
+    },
+    deleteAction: {
+      backgroundColor: '#E8542F',
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: 80,
+      borderRadius: 16,
+      marginLeft: Spacing.sm,
+    },
+    toast: {
+      position: 'absolute',
+      bottom: 40,
+      left: Spacing.lg,
+      right: Spacing.lg,
+      backgroundColor: Colors.successText,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: Spacing.lg,
+      paddingVertical: Spacing.md,
+      borderRadius: 999,
+      gap: Spacing.md,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 12,
+      elevation: 5,
+    },
+    toastText: {
+      color: 'white',
+      fontSize: 14,
+      fontWeight: '600',
+    },
+  });

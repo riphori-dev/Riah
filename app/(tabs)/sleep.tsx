@@ -1,26 +1,28 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  Animated,
-  Dimensions,
-  FlatList,
-  UIManager,
-  Platform,
-  AppState,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ScreenFeedback from '@/components/ScreenFeedback';
+import { useAction } from '@/hooks/useAction';
+import { useConfirmDelete } from '@/hooks/useConfirmDelete';
 import { Ionicons } from '@expo/vector-icons';
-import { Swipeable } from 'react-native-gesture-handler';
 import { useFocusEffect } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Animated,
+  AppState,
+  FlatList,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  UIManager,
+  View,
+} from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing } from '@/constants';
-import { sleepLogs, SleepLog } from '@/db/database';
+import { Spacing, useTheme, useThemedStyles } from '@/constants';
+import { activeSleep, SleepLog, sleepLogs } from '@/db/database';
+import { dayBounds, sleepIntervals } from '@/utils/care';
 import { getTimeAgo } from '@/utils/timeUtils';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -41,9 +43,13 @@ interface SleepBlock {
   startTime: number;
 }
 
-const { width } = Dimensions.get('window');
-
 export default function SleepScreen() {
+  const { colors: Colors } = useTheme();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const mutation = useAction();
+  const deletion = useConfirmDelete();
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
   const [isSleeping, setIsSleeping] = useState(false);
   const [sleepType, setSleepType] = useState<SleepType>('nap');
@@ -53,7 +59,7 @@ export default function SleepScreen() {
   const [totalSleepToday, setTotalSleepToday] = useState(0);
   const [napCountToday, setNapCountToday] = useState(0);
   const [lastSleepTimestamp, setLastSleepTimestamp] = useState<string | null>(null); // Raw ISO timestamp
-  const [timerTick, setTimerTick] = useState(0); // Force re-render on timer update
+  const [, setTimerTick] = useState(0);
   const [sleepBlocks, setSleepBlocks] = useState<SleepBlock[]>([]);
   const [toast, setToast] = useState<ToastMessage>({ id: '', text: '', visible: false });
 
@@ -67,48 +73,22 @@ export default function SleepScreen() {
   ];
   const cardBgAnimation = useRef(new Animated.Value(0)).current;
   const toastAnim = useRef(new Animated.Value(-100)).current;
-  
+
   const sleepTimerInterval = useRef<ReturnType<typeof setInterval> | null>(null);
-  const statsTimerInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Initialize sleep state from AsyncStorage
-  useEffect(() => {
-    const initializeSleepState = async () => {
-      try {
-        const savedIsSleeping = await AsyncStorage.getItem('isSleeping');
-        const savedSleepStartTime = await AsyncStorage.getItem('sleepStartTime');
-        const savedSleepType = await AsyncStorage.getItem('sleepType');
-        
-        if (savedIsSleeping === 'true' && savedSleepStartTime) {
-          setIsSleeping(true);
-          setSleepStartTime(parseInt(savedSleepStartTime));
-          setSleepType((savedSleepType as SleepType) || 'nap');
-        }
-      } catch (error) {
-        console.error('Error loading sleep state:', error);
-      }
-    };
-    
-    initializeSleepState();
+  // Active sessions are stored transactionally in SQLite, shared with Home.
+  const [sessionReady, setSessionReady] = useState(false);
+  const restoreSession = useCallback(async () => {
+    const session = await activeSleep.get();
+    setIsSleeping(!!session);
+    setSleepStartTime(session?.start_time ?? null);
+    if (session) {
+      setSleepType(session.type);
+      setCurrentSleepDuration(Math.max(0, Math.floor((Date.now() - session.start_time) / 1000)));
+    }
+    setSessionReady(true);
   }, []);
-
-  // Save sleep state to AsyncStorage
-  useEffect(() => {
-    const saveSleepState = async () => {
-      try {
-        await AsyncStorage.setItem('isSleeping', isSleeping.toString());
-        if (sleepStartTime) {
-          await AsyncStorage.setItem('sleepStartTime', sleepStartTime.toString());
-        }
-        await AsyncStorage.setItem('sleepType', sleepType);
-      } catch (error) {
-        console.error('Error saving sleep state:', error);
-      }
-    };
-    
-    saveSleepState();
-  }, [isSleeping, sleepStartTime, sleepType]);
 
   // Card background animation
   useEffect(() => {
@@ -127,7 +107,7 @@ export default function SleepScreen() {
           toValue: 1,
           duration: 8000,
           useNativeDriver: true,
-        })
+        }),
       ).start();
     } else {
       rotationAnimation.stopAnimation();
@@ -149,9 +129,9 @@ export default function SleepScreen() {
             duration: 1500,
             useNativeDriver: true,
           }),
-        ])
+        ]),
       ).start();
-      
+
       // Star animations
       starAnimations.forEach((anim, index) => {
         Animated.loop(
@@ -167,12 +147,12 @@ export default function SleepScreen() {
               duration: 1000,
               useNativeDriver: true,
             }),
-          ])
+          ]),
         ).start();
       });
     } else {
       pulseAnimation.setValue(1);
-      starAnimations.forEach(anim => anim.setValue(0));
+      starAnimations.forEach((anim) => anim.setValue(0));
     }
   }, [isSleeping]);
 
@@ -197,67 +177,37 @@ export default function SleepScreen() {
 
   // Load data
   const loadData = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
+      await restoreSession();
       const logs = await sleepLogs.getRecent(15);
       setHistory(logs);
 
-      // Calculate today's stats
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayMs = today.getTime();
-
-      let totalMinutes = 0;
-      let napCount = 0;
-      let lastSleep = logs[0];
+      const { start: todayMs } = dayBounds();
+      const now = Date.now();
+      const todayLogs = await sleepLogs.getTodayLogs();
+      const intervals = sleepIntervals(todayLogs, todayMs, now);
+      const totalMinutes = Math.round(intervals.reduce((sum, [a, b]) => sum + b - a, 0) / 60000);
+      const napCount = todayLogs.filter(
+        (log) => log.type === 'nap' && log.start_time >= todayMs,
+      ).length;
+      const lastSleep = logs[0];
       const blocks: SleepBlock[] = [];
-
-      const allLogs = await sleepLogs.getAll();
-      const todayLogs = allLogs.filter((log) => log.start_time >= todayMs);
-
-      // Create timeline blocks
-      const todayEnd = todayMs + 24 * 60 * 60 * 1000;
       let currentTime = todayMs;
-
-      todayLogs.sort((a, b) => a.start_time - b.start_time);
-
-      todayLogs.forEach((log) => {
-        totalMinutes += log.duration_minutes;
-        if (log.type === 'nap') {
-          napCount++;
-        }
-
-        // Add awake block before sleep
-        if (currentTime < log.start_time) {
-          blocks.push({
-            type: 'awake',
-            duration: log.start_time - currentTime,
-            startTime: currentTime,
-          });
-        }
-
-        // Add sleep block
-        blocks.push({
-          type: 'sleep',
-          duration: log.duration_minutes * 60 * 1000,
-          startTime: log.start_time,
-        });
-
-        currentTime = log.end_time;
-      });
-
-      // Add final awake block if needed
-      if (currentTime < todayEnd) {
-        blocks.push({
-          type: 'awake',
-          duration: todayEnd - currentTime,
-          startTime: currentTime,
-        });
+      for (const [start, end] of intervals) {
+        if (start > currentTime)
+          blocks.push({ type: 'awake', duration: start - currentTime, startTime: currentTime });
+        blocks.push({ type: 'sleep', duration: end - start, startTime: start });
+        currentTime = end;
       }
+      if (currentTime < now)
+        blocks.push({ type: 'awake', duration: now - currentTime, startTime: currentTime });
 
       setSleepBlocks(blocks);
       setTotalSleepToday(totalMinutes);
       setNapCountToday(napCount);
-      
+
       // Store raw timestamp for fresh calculation on every render
       if (lastSleep) {
         setLastSleepTimestamp(new Date(lastSleep.start_time).toISOString());
@@ -265,23 +215,27 @@ export default function SleepScreen() {
         setLastSleepTimestamp(null);
       }
     } catch (error) {
-      console.error('Error loading sleep data:', error);
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to load your records. Please try again.',
+      );
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [restoreSession]);
 
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [loadData])
+    }, [loadData]),
   );
 
   // Listen for app state changes - recalculate timers when app comes to foreground
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', nextState => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         // App came back to foreground — recalculate everything immediately
         loadData();
-        setTimerTick(prev => prev + 1); // Force re-render with fresh timer calculations
+        setTimerTick((prev) => prev + 1); // Force re-render with fresh timer calculations
       }
     });
     return () => subscription.remove();
@@ -290,7 +244,7 @@ export default function SleepScreen() {
   // Update timer every minute (just trigger re-render)
   useEffect(() => {
     const interval = setInterval(() => {
-      setTimerTick(prev => prev + 1);
+      setTimerTick((prev) => prev + 1);
     }, 60000);
 
     return () => clearInterval(interval);
@@ -328,11 +282,27 @@ export default function SleepScreen() {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    const dateStr = date.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
-    const todayStr = today.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
-    const yesterdayStr = yesterday.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    const dateStr = date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const todayStr = today.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const yesterdayStr = yesterday.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
 
-    const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const timeStr = date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
 
     if (dateStr === todayStr) {
       return `Today at ${timeStr}`;
@@ -372,35 +342,17 @@ export default function SleepScreen() {
 
   // Toggle sleep
   const handleToggleSleep = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    if (isSleeping && sleepStartTime) {
-      // Stop sleeping - save to database
-      try {
-        const endTime = Date.now();
-        const durationMinutes = Math.round((endTime - sleepStartTime) / 60000);
-
-        await sleepLogs.insert(sleepStartTime, endTime, durationMinutes, sleepType);
-
-        setIsSleeping(false);
-        setSleepStartTime(null);
-        setCurrentSleepDuration(0);
-
-        showToast('Sleep logged! 🌟');
-        await loadData();
-      } catch (error) {
-        console.error('Error saving sleep log:', error);
-        showToast('Error saving sleep');
-      }
+    if (!sessionReady) return;
+    if (isSleeping) {
+      await activeSleep.stop();
+      setCurrentSleepDuration(0);
+      showToast('Sleep logged!');
     } else {
-      // Start sleeping
-      const startTime = Date.now();
-      setIsSleeping(true);
-      setSleepStartTime(startTime);
+      await activeSleep.start(sleepType);
       setCurrentSleepDuration(0);
     }
+    await loadData();
   };
-
 
   // Delete entry
   const handleDelete = async (id: number) => {
@@ -408,12 +360,19 @@ export default function SleepScreen() {
       await sleepLogs.deleteById(id);
       await loadData();
     } catch (error) {
-      console.error('Error deleting sleep log:', error);
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to save changes. Please try again.',
+      );
     }
   };
 
   const renderRightActions = (id: number) => (
-    <TouchableOpacity style={styles.deleteAction} onPress={() => handleDelete(id)}>
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel="Delete this record"
+      style={styles.deleteAction}
+      onPress={() => deletion.ask(() => handleDelete(id))}
+    >
       <Ionicons name="trash-outline" size={20} color="white" />
     </TouchableOpacity>
   );
@@ -423,13 +382,13 @@ export default function SleepScreen() {
       case 'nap':
         return {
           icon: 'partly-sunny' as const,
-          bgColor: '#EAF3DE',
-          color: '#3B6D11',
+          bgColor: Colors.softGreen,
+          color: Colors.successText,
         };
       case 'night':
         return {
           icon: 'moon' as const,
-          bgColor: '#F0EFFF',
+          bgColor: Colors.softPurple,
           color: '#7B68EE',
         };
     }
@@ -445,10 +404,10 @@ export default function SleepScreen() {
           </View>
 
           <View style={styles.historyInfo}>
-            <Text style={styles.historyType}>
-              {item.type === 'nap' ? 'Nap' : 'Night Sleep'}
+            <Text style={styles.historyType}>{item.type === 'nap' ? 'Nap' : 'Night Sleep'}</Text>
+            <Text style={styles.historyTime}>
+              {formatTimeRange(item.start_time, item.end_time)}
             </Text>
-            <Text style={styles.historyTime}>{formatTimeRange(item.start_time, item.end_time)}</Text>
             <Text style={styles.historyDate}>{formatHistoryTime(item.start_time)}</Text>
           </View>
 
@@ -464,7 +423,7 @@ export default function SleepScreen() {
 
   const cardBackgroundColor = cardBgAnimation.interpolate({
     inputRange: [0, 1],
-    outputRange: ['#FFF0E8', '#EEF0FF'],
+    outputRange: [Colors.softPrimary, '#EEF0FF'],
   });
 
   const sunRotation = rotationAnimation.interpolate({
@@ -473,8 +432,6 @@ export default function SleepScreen() {
   });
 
   // Calculate visual block widths
-  const totalBlockDuration = sleepBlocks.reduce((sum, block) => sum + block.duration, 0);
-  const blockWidth = totalBlockDuration > 0 ? (width - Spacing.lg * 2) / (totalBlockDuration / (60 * 1000)) : 0;
 
   return (
     <View style={[styles.container, { backgroundColor: Colors.background }]}>
@@ -483,20 +440,31 @@ export default function SleepScreen() {
         style={styles.scrollView}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
-        {/* Header */}
+        <ScreenFeedback
+          loading={loading}
+          error={loadError || mutation.error}
+          onRetry={loadError ? () => loadData() : undefined}
+        />
+
         <View style={[styles.header, { paddingTop: insets.top + Spacing.lg }]}>
           <Text style={styles.headerTitle}>Sleep Tracker</Text>
-          <TouchableOpacity style={styles.historyButton} onPress={scrollToHistory}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="View recent sleep sessions"
+            style={styles.historyButton}
+            onPress={scrollToHistory}
+          >
             <Ionicons name="time-outline" size={22} color={Colors.primary} />
           </TouchableOpacity>
         </View>
 
-        {/* Daily Summary Bar */}
         <View style={styles.summaryBar}>
           <View style={[styles.summaryCard, { backgroundColor: Colors.card }]}>
             <Ionicons name="moon-outline" size={18} color="#7B68EE" />
             <Text style={styles.summaryNumber}>
-              {totalSleepToday > 0 ? `${Math.floor(totalSleepToday / 60)}h ${totalSleepToday % 60}m` : '--'}
+              {totalSleepToday > 0
+                ? `${Math.floor(totalSleepToday / 60)}h ${totalSleepToday % 60}m`
+                : '--'}
             </Text>
             <Text style={styles.summaryLabel}>total sleep</Text>
           </View>
@@ -514,18 +482,19 @@ export default function SleepScreen() {
           </View>
         </View>
 
-        {/* Today's Sleep Timeline */}
         {sleepBlocks.length > 0 && (
           <View style={styles.timelineContainer}>
             <Text style={styles.sectionLabel}>Today's timeline</Text>
             <View style={styles.timelineBar}>
               {sleepBlocks.map((block, idx) => {
                 if (block.type === 'sleep') {
-                  const startPercent = ((block.startTime - new Date().setHours(0, 0, 0, 0)) / (24 * 60 * 60 * 1000)) * 100;
+                  const startPercent =
+                    ((block.startTime - new Date().setHours(0, 0, 0, 0)) / (24 * 60 * 60 * 1000)) *
+                    100;
                   const widthPercent = (block.duration / (24 * 60 * 60 * 1000)) * 100;
-                  const log = history.find(log => log.start_time === block.startTime);
+                  const log = history.find((log) => log.start_time === block.startTime);
                   const isNap = log?.type === 'nap';
-                  
+
                   return (
                     <View
                       key={idx}
@@ -553,9 +522,7 @@ export default function SleepScreen() {
           </View>
         )}
 
-        {/* Hero Sleep Toggle Card */}
         <Animated.View style={[styles.heroCard, { backgroundColor: cardBackgroundColor }]}>
-          {/* Animated Icon */}
           {!isSleeping ? (
             <Animated.View
               style={[
@@ -568,7 +535,13 @@ export default function SleepScreen() {
             </Animated.View>
           ) : (
             <View style={styles.moonContainer}>
-              <Animated.View style={[styles.iconCircle, styles.moonCircle, { transform: [{ scale: pulseAnimation }] }]}>
+              <Animated.View
+                style={[
+                  styles.iconCircle,
+                  styles.moonCircle,
+                  { transform: [{ scale: pulseAnimation }] },
+                ]}
+              >
                 <Ionicons name="moon" size={52} color="#7B68EE" />
               </Animated.View>
               {starAnimations.map((anim, index) => (
@@ -580,10 +553,10 @@ export default function SleepScreen() {
                       opacity: anim,
                       transform: [
                         {
-                          translateX: Math.cos((index * 120) * Math.PI / 180) * 60,
+                          translateX: Math.cos((index * 120 * Math.PI) / 180) * 60,
                         },
                         {
-                          translateY: Math.sin((index * 120) * Math.PI / 180) * 60,
+                          translateY: Math.sin((index * 120 * Math.PI) / 180) * 60,
                         },
                       ],
                     },
@@ -595,7 +568,6 @@ export default function SleepScreen() {
             </View>
           )}
 
-          {/* Status Text */}
           {!isSleeping ? (
             <View style={styles.statusTextContainer}>
               <Text style={styles.statusText}>Baby is awake</Text>
@@ -606,59 +578,78 @@ export default function SleepScreen() {
               <Text style={styles.statusText}>Baby is sleeping</Text>
               <Text style={styles.sleepDuration}>{formatDuration(currentSleepDuration)}</Text>
               <Text style={styles.statusSubtext}>
-                Started at {new Date(sleepStartTime!).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                Started at{' '}
+                {new Date(sleepStartTime!).toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: true,
+                })}
               </Text>
             </View>
           )}
 
-          {/* Sleep Type Selector (only when awake) */}
           {!isSleeping && (
             <View style={styles.sleepTypeSelector}>
               <TouchableOpacity
-                style={[
-                  styles.sleepTypePill,
-                  sleepType === 'nap' && styles.sleepTypePillActive,
-                ]}
+                accessibilityRole="button"
+                style={[styles.sleepTypePill, sleepType === 'nap' && styles.sleepTypePillActive]}
                 onPress={() => setSleepType('nap')}
               >
-                <Ionicons name="partly-sunny-outline" size={14} color={sleepType === 'nap' ? 'white' : '#8C7B6E'} />
-                <Text style={[styles.sleepTypeText, { color: sleepType === 'nap' ? 'white' : '#8C7B6E' }]}>
+                <Ionicons
+                  name="partly-sunny-outline"
+                  size={14}
+                  color={sleepType === 'nap' ? 'white' : Colors.lightText}
+                />
+                <Text
+                  style={[
+                    styles.sleepTypeText,
+                    { color: sleepType === 'nap' ? 'white' : Colors.lightText },
+                  ]}
+                >
                   Nap
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[
-                  styles.sleepTypePill,
-                  sleepType === 'night' && styles.sleepTypePillActive,
-                ]}
+                accessibilityRole="button"
+                style={[styles.sleepTypePill, sleepType === 'night' && styles.sleepTypePillActive]}
                 onPress={() => setSleepType('night')}
               >
-                <Ionicons name="moon-outline" size={14} color={sleepType === 'night' ? 'white' : '#8C7B6E'} />
-                <Text style={[styles.sleepTypeText, { color: sleepType === 'night' ? 'white' : '#8C7B6E' }]}>
+                <Ionicons
+                  name="moon-outline"
+                  size={14}
+                  color={sleepType === 'night' ? 'white' : Colors.lightText}
+                />
+                <Text
+                  style={[
+                    styles.sleepTypeText,
+                    { color: sleepType === 'night' ? 'white' : Colors.lightText },
+                  ]}
+                >
                   Night sleep
                 </Text>
               </TouchableOpacity>
             </View>
           )}
 
-          {/* Action Button */}
           <TouchableOpacity
+            accessibilityRole="button"
             style={[
               styles.actionButton,
-              { backgroundColor: isSleeping ? '#F4A98A' : '#7B68EE',
-                padding: Spacing.md,
-               },
+              { backgroundColor: isSleeping ? '#F4A98A' : '#7B68EE', padding: Spacing.md },
             ]}
-            onPress={handleToggleSleep}
+            disabled={mutation.pending || !sessionReady}
+            accessibilityState={{ busy: mutation.pending }}
+            onPress={() => mutation.run(handleToggleSleep)}
           >
-            <Ionicons name={isSleeping ? 'sunny-outline' : 'play-circle-outline'} size={22} color="white" />
-            <Text style={styles.actionButtonText}>
-              {isSleeping ? 'Wake Up' : 'Start Sleep'}
-            </Text>
+            <Ionicons
+              name={isSleeping ? 'sunny-outline' : 'play-circle-outline'}
+              size={22}
+              color="white"
+            />
+            <Text style={styles.actionButtonText}>{isSleeping ? 'Wake Up' : 'Start Sleep'}</Text>
           </TouchableOpacity>
         </Animated.View>
 
-        {/* History List */}
         <View style={styles.historySection}>
           <Text style={styles.sectionLabel}>Recent sleep sessions</Text>
           {history.length === 0 ? (
@@ -679,7 +670,6 @@ export default function SleepScreen() {
         </View>
       </ScrollView>
 
-      {/* Toast */}
       {toast.visible && (
         <Animated.View
           style={[
@@ -693,293 +683,295 @@ export default function SleepScreen() {
           <Text style={styles.toastText}>{toast.text}</Text>
         </Animated.View>
       )}
+      {deletion.dialog}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.lg,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  historyButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFF0E8',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 0.5,
-    borderColor: Colors.primary,
-  },
-  summaryBar: {
-    flexDirection: 'row',
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.xl,
-    gap: Spacing.md,
-  },
-  summaryCard: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    borderRadius: 16,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  summaryNumber: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: Colors.text,
-    marginTop: Spacing.sm,
-  },
-  summaryLabel: {
-    fontSize: 11,
-    color: '#8C7B6E',
-    fontWeight: '600',
-    marginTop: Spacing.xs,
-  },
-  sectionLabel: {
-    fontSize: 11,
-    color: '#8C7B6E',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-  },
-  timelineContainer: {
-    marginBottom: Spacing.xl,
-  },
-  timelineBar: {
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F0EFFF',
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.sm,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  timelineBlock: {
-    position: 'absolute',
-    height: '100%',
-    borderRadius: 8,
-  },
-  timelineMarkers: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-  },
-  timelineMarker: {
-    fontSize: 10,
-    color: '#8C7B6E',
-    fontWeight: '500',
-  },
-  heroCard: {
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.xl,
-    borderRadius: 24,
-    padding: Spacing.xl,
-    alignItems: 'center',
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 3,
-  },
-  iconCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: Spacing.lg,
-  },
-  sunCircle: {
-    backgroundColor: '#FFF8E8',
-  },
-  moonCircle: {
-    backgroundColor: '#E8E8FF',
-  },
-  moonContainer: {
-    position: 'relative',
-    marginBottom: Spacing.lg,
-  },
-  star: {
-    position: 'absolute',
-  },
-  statusTextContainer: {
-    alignItems: 'center',
-    marginBottom: Spacing.lg,
-  },
-  statusText: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: Spacing.sm,
-  },
-  sleepDuration: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#7B68EE',
-    marginBottom: Spacing.sm,
-  },
-  statusSubtext: {
-    fontSize: 13,
-    color: '#8C7B6E',
-  },
-  sleepTypeSelector: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginBottom: Spacing.lg,
-  },
-  sleepTypePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: '#F0EFFF',
-    gap: Spacing.sm,
-  },
-  sleepTypePillActive: {
-    backgroundColor: '#7B68EE',
-  },
-  sleepTypeText: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 18,
-    borderRadius: 20,
-    gap: Spacing.sm,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 3,
-  },
-  actionButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: 'white',
-  },
-  historySection: {
-    paddingHorizontal: Spacing.lg,
-  },
-  historyCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: 16,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-    marginBottom: Spacing.sm,
-  },
-  historyTypeIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: Spacing.md,
-  },
-  historyInfo: {
-    flex: 1,
-  },
-  historyType: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  historyTime: {
-    fontSize: 12,
-    color: '#8C7B6E',
-    marginTop: Spacing.xs,
-  },
-  historyDate: {
-    fontSize: 12,
-    color: '#8C7B6E',
-    marginTop: Spacing.xs,
-  },
-  durationPill: {
-    backgroundColor: '#F0EFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  durationPillText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#7B68EE',
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyStateTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-    marginTop: Spacing.lg,
-  },
-  emptyStateSubtext: {
-    fontSize: 13,
-    color: '#8C7B6E',
-    marginTop: Spacing.sm,
-  },
-  deleteAction: {
-    backgroundColor: '#C0392B',
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: 80,
-    borderRadius: 16,
-    marginLeft: Spacing.sm,
-  },
-  toast: {
-    position: 'absolute',
-    bottom: 40,
-    left: Spacing.lg,
-    right: Spacing.lg,
-    backgroundColor: '#7B68EE',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderRadius: 999,
-    gap: Spacing.md,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  toastText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-});
+const createStyles = (Colors: typeof import('@/constants').Colors) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+    },
+    scrollView: {
+      flex: 1,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: Spacing.lg,
+      paddingBottom: Spacing.lg,
+    },
+    headerTitle: {
+      fontSize: 22,
+      fontWeight: '700',
+      color: Colors.text,
+    },
+    historyButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: Colors.softPrimary,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 0.5,
+      borderColor: Colors.primary,
+    },
+    summaryBar: {
+      flexDirection: 'row',
+      paddingHorizontal: Spacing.lg,
+      marginBottom: Spacing.xl,
+      gap: Spacing.md,
+    },
+    summaryCard: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: Spacing.md,
+      borderRadius: 16,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    summaryNumber: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: Colors.text,
+      marginTop: Spacing.sm,
+    },
+    summaryLabel: {
+      fontSize: 11,
+      color: Colors.lightText,
+      fontWeight: '600',
+      marginTop: Spacing.xs,
+    },
+    sectionLabel: {
+      fontSize: 11,
+      color: Colors.lightText,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginBottom: Spacing.md,
+      paddingHorizontal: Spacing.lg,
+    },
+    timelineContainer: {
+      marginBottom: Spacing.xl,
+    },
+    timelineBar: {
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: Colors.softPurple,
+      marginHorizontal: Spacing.lg,
+      marginBottom: Spacing.sm,
+      overflow: 'hidden',
+      position: 'relative',
+    },
+    timelineBlock: {
+      position: 'absolute',
+      height: '100%',
+      borderRadius: 8,
+    },
+    timelineMarkers: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: Spacing.lg,
+    },
+    timelineMarker: {
+      fontSize: 10,
+      color: Colors.lightText,
+      fontWeight: '500',
+    },
+    heroCard: {
+      marginHorizontal: Spacing.lg,
+      marginBottom: Spacing.xl,
+      borderRadius: 24,
+      padding: Spacing.xl,
+      alignItems: 'center',
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 3,
+    },
+    iconCircle: {
+      width: 96,
+      height: 96,
+      borderRadius: 48,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: Spacing.lg,
+    },
+    sunCircle: {
+      backgroundColor: '#FFF8E8',
+    },
+    moonCircle: {
+      backgroundColor: '#E8E8FF',
+    },
+    moonContainer: {
+      position: 'relative',
+      marginBottom: Spacing.lg,
+    },
+    star: {
+      position: 'absolute',
+    },
+    statusTextContainer: {
+      alignItems: 'center',
+      marginBottom: Spacing.lg,
+    },
+    statusText: {
+      fontSize: 22,
+      fontWeight: '700',
+      color: Colors.text,
+      marginBottom: Spacing.sm,
+    },
+    sleepDuration: {
+      fontSize: 32,
+      fontWeight: '700',
+      color: '#7B68EE',
+      marginBottom: Spacing.sm,
+    },
+    statusSubtext: {
+      fontSize: 13,
+      color: Colors.lightText,
+    },
+    sleepTypeSelector: {
+      flexDirection: 'row',
+      gap: Spacing.md,
+      marginBottom: Spacing.lg,
+    },
+    sleepTypePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: Colors.softPurple,
+      gap: Spacing.sm,
+    },
+    sleepTypePillActive: {
+      backgroundColor: '#7B68EE',
+    },
+    sleepTypeText: {
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    actionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 18,
+      borderRadius: 20,
+      gap: Spacing.sm,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 3,
+    },
+    actionButtonText: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: Colors.onPrimary,
+    },
+    historySection: {
+      paddingHorizontal: Spacing.lg,
+    },
+    historyCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: Spacing.lg,
+      paddingHorizontal: Spacing.lg,
+      borderRadius: 16,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+      marginBottom: Spacing.sm,
+    },
+    historyTypeIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: Spacing.md,
+    },
+    historyInfo: {
+      flex: 1,
+    },
+    historyType: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: Colors.text,
+    },
+    historyTime: {
+      fontSize: 12,
+      color: Colors.lightText,
+      marginTop: Spacing.xs,
+    },
+    historyDate: {
+      fontSize: 12,
+      color: Colors.lightText,
+      marginTop: Spacing.xs,
+    },
+    durationPill: {
+      backgroundColor: Colors.softPurple,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    durationPillText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: '#7B68EE',
+    },
+    emptyState: {
+      alignItems: 'center',
+      paddingVertical: 60,
+    },
+    emptyStateTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: Colors.text,
+      marginTop: Spacing.lg,
+    },
+    emptyStateSubtext: {
+      fontSize: 13,
+      color: Colors.lightText,
+      marginTop: Spacing.sm,
+    },
+    deleteAction: {
+      backgroundColor: Colors.dangerText,
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: 80,
+      borderRadius: 16,
+      marginLeft: Spacing.sm,
+    },
+    toast: {
+      position: 'absolute',
+      bottom: 40,
+      left: Spacing.lg,
+      right: Spacing.lg,
+      backgroundColor: '#7B68EE',
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: Spacing.lg,
+      paddingVertical: Spacing.md,
+      borderRadius: 999,
+      gap: Spacing.md,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 12,
+      elevation: 5,
+    },
+    toastText: {
+      color: 'white',
+      fontSize: 14,
+      fontWeight: '600',
+    },
+  });

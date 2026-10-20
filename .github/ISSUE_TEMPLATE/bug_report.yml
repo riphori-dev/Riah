@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible problem in Riah.
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: 'Use synthetic records and redact private details. Follow SECURITY.md for sensitive vulnerabilities rather than posting them publicly.'
+  - type: input
+    id: case_id
+    attributes:
+      label: Android test case ID
+      description: 'If applicable, use the ID from docs/testing/ANDROID_TEST_CASES.md.'
+      placeholder: 'For example, S03 or R02'
+  - type: textarea
+    id: environment
+    attributes:
+      label: Device and build
+      description: 'Phone model, Android version, app version/build label, development client or standalone APK, source revision and whether it includes uncommitted changes.'
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: 'Start from a known screen/state. Use numbered steps and include how often this happens.'
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and relevant settings
+      description: 'Redacted screenshots/error text; notification permission, battery/DND/network/time-zone settings when relevant. For reminders include scheduled and actual delivery times. Do not attach personal records or whole device logs.'

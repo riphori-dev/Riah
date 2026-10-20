@@ -1,4 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import { useTheme } from '@/constants';
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import * as Haptics from 'expo-haptics';
+import { useRouter } from 'expo-router';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -11,15 +17,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import ScreenFeedback from '@/components/ScreenFeedback';
 import { babyProfile } from '@/db/database';
+import { ageInMonths, localDateString, parseBirthdate } from '@/utils/care';
 
-const PALETTE = {
+const BASE_PALETTE = {
   background: '#FFF8F4',
   card: '#FFFAF7',
   primary: '#F4A98A',
@@ -52,9 +56,32 @@ const MONTHS = [
 
 type Gender = 'girl' | 'boy' | 'neutral';
 
+function useSetupTheme() {
+  const { colors } = useTheme();
+  const PALETTE = useMemo(
+    () => ({
+      ...BASE_PALETTE,
+      background: colors.background,
+      card: colors.card,
+      text: colors.text,
+      muted: colors.lightText,
+      lightText: colors.lightText,
+      border: colors.lightBorder,
+      softPeach: colors.softPrimary,
+      successBg: colors.softGreen,
+      success: colors.text,
+    }),
+    [colors],
+  );
+  return { PALETTE, styles: useMemo(() => createStyles(PALETTE), [PALETTE]) };
+}
+
 export default function SetupScreen() {
+  const { PALETTE, styles } = useSetupTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const [formError, setFormError] = useState<string | null>(null);
+  const submitLock = React.useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [name, setName] = useState('');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -62,13 +89,6 @@ export default function SetupScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
 
   // Calculate age in months from birthdate
-  const calculateAgeInMonths = (birthdate: Date): number => {
-    const now = new Date();
-    const years = now.getFullYear() - birthdate.getFullYear();
-    const months = now.getMonth() - birthdate.getMonth();
-    return years * 12 + months;
-  };
-
   // Generate date picker data
   const datePickerData = useMemo(() => {
     const currentYear = new Date().getFullYear();
@@ -87,7 +107,16 @@ export default function SetupScreen() {
   const [pickerDay, setPickerDay] = useState(new Date().getDate());
 
   const handleDateSelect = () => {
-    const selected = new Date(pickerYear, pickerMonth, pickerDay);
+    const days = new Date(pickerYear, pickerMonth + 1, 0).getDate();
+    const selected = new Date(pickerYear, pickerMonth, Math.min(pickerDay, days));
+    try {
+      parseBirthdate(localDateString(selected));
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : 'Choose a valid birthdate.');
+      setShowDatePicker(false);
+      return;
+    }
+    setFormError(null);
     setSelectedDate(selected);
     setShowDatePicker(false);
   };
@@ -98,38 +127,43 @@ export default function SetupScreen() {
   };
 
   const handleContinue = async () => {
-    if (!selectedDate) return;
+    if (!selectedDate || submitLock.current) return;
+    submitLock.current = true;
+    setFormError(null);
 
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setIsSubmitting(true);
 
       // Calculate age in months
-      const ageMonths = calculateAgeInMonths(selectedDate);
+      const ageMonths = ageInMonths(selectedDate);
 
       // Clean and capitalize name
-      const cleanName = name.trim().length > 0
-        ? name.trim().replace(/^\w/, c => c.toUpperCase())
-        : 'Baby';
+      const cleanName =
+        name.trim().length > 0 ? name.trim().replace(/^\w/, (c) => c.toUpperCase()) : 'Baby';
 
       // Save to SQLite baby_profile
       await babyProfile.insert(
         cleanName,
         ageMonths,
-        selectedDate.toISOString().split('T')[0], // YYYY-MM-DD format
-        selectedGender
+        localDateString(selectedDate), // YYYY-MM-DD format
+        selectedGender,
       );
 
       // Save name to AsyncStorage for quick access
-      await AsyncStorage.setItem('babyName', cleanName);
+      await AsyncStorage.setItem('babyName', cleanName).catch(() => {});
 
       // Save onboarded flag to AsyncStorage
-      await AsyncStorage.setItem('onboarded', 'true');
+      await AsyncStorage.setItem('onboarded', 'true').catch(() => {});
 
       // Navigate to main app
       router.replace('/(tabs)');
     } catch (error) {
-      console.error('Error saving baby profile:', error);
+      setFormError(
+        error instanceof Error ? error.message : 'Unable to save your profile. Please try again.',
+      );
+    } finally {
+      submitLock.current = false;
       setIsSubmitting(false);
     }
   };
@@ -152,8 +186,10 @@ export default function SetupScreen() {
         keyboardShouldPersistTaps="handled"
         bounces={false}
       >
+        <ScreenFeedback error={formError} />
         <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
           <TouchableOpacity
+            accessibilityRole="button"
             style={styles.backButton}
             onPress={() => router.replace('/landing')}
             activeOpacity={0.7}
@@ -171,14 +207,13 @@ export default function SetupScreen() {
             <Ionicons name="happy-outline" size={40} color={PALETTE.primary} />
           </View>
           <Text style={styles.heading}>Tell us about your baby</Text>
-          <Text style={styles.subtitle}>
-            This helps Riah personalize{'\n'}everything for you.
-          </Text>
+          <Text style={styles.subtitle}>This helps Riah personalize{'\n'}everything for you.</Text>
         </View>
 
         <View style={styles.formCard}>
           <FieldLabel icon="heart-outline" label="BABY'S NAME" />
           <TextInput
+            accessibilityLabel="Baby name"
             style={styles.textInput}
             placeholder="e.g. Lucia"
             placeholderTextColor={PALETTE.lightText}
@@ -188,16 +223,32 @@ export default function SetupScreen() {
             maxLength={30}
             returnKeyType="next"
           />
-          {name.trim().length > 0 && (
-            <Text style={styles.namePreview}>Hi, {name.trim()}!</Text>
-          )}
+          {name.trim().length > 0 && <Text style={styles.namePreview}>Hi, {name.trim()}!</Text>}
 
           <View style={styles.divider} />
 
           <FieldLabel icon="calendar-outline" label="BABY'S BIRTHDATE" />
           <TouchableOpacity
+            accessibilityRole="button"
             style={styles.dateButton}
-            onPress={() => setShowDatePicker(true)}
+            accessibilityLabel="Choose baby's birthdate"
+            onPress={() => {
+              if (Platform.OS !== 'android') {
+                setShowDatePicker(true);
+                return;
+              }
+              DateTimePickerAndroid.open({
+                value: selectedDate ?? new Date(),
+                mode: 'date',
+                display: 'default',
+                maximumDate: new Date(),
+                onChange: (event, date) => {
+                  if (event.type !== 'set' || !date) return;
+                  setSelectedDate(date);
+                  setFormError(null);
+                },
+              });
+            }}
             activeOpacity={0.75}
           >
             <View style={styles.dateButtonLeft}>
@@ -218,7 +269,8 @@ export default function SetupScreen() {
             <View style={styles.validationRow}>
               <Ionicons name="alert-circle-outline" size={13} color={PALETTE.primary} />
               <Text style={styles.validationText}>
-                {' '}Please select your baby's birthdate to continue
+                {' '}
+                Please select your baby's birthdate to continue
               </Text>
             </View>
           )}
@@ -226,9 +278,7 @@ export default function SetupScreen() {
           {selectedDate && (
             <View style={styles.agePill}>
               <Ionicons name="checkmark-circle" size={14} color={PALETTE.success} />
-              <Text style={styles.ageText}>
-                {' '}{calculateAgeInMonths(selectedDate)} months old
-              </Text>
+              <Text style={styles.ageText}> {ageInMonths(selectedDate)} months old</Text>
             </View>
           )}
 
@@ -255,22 +305,12 @@ export default function SetupScreen() {
               isSelected={selectedGender === 'boy'}
               onPress={() => handleGenderSelect('boy')}
             />
-            {/* <GenderPill
-              gender="neutral"
-              icon="remove-circle-outline"
-              label="Skip"
-              isSelected={selectedGender === 'neutral'}
-              isLast
-              onPress={() => handleGenderSelect('neutral')}
-            /> */}
           </View>
         </View>
 
         <TouchableOpacity
-          style={[
-            styles.continueButton,
-            { opacity: isContinueDisabled ? 0.5 : 1 },
-          ]}
+          accessibilityRole="button"
+          style={[styles.continueButton, { opacity: isContinueDisabled ? 0.5 : 1 }]}
           onPress={handleContinue}
           disabled={isContinueDisabled}
           activeOpacity={0.8}
@@ -285,7 +325,9 @@ export default function SetupScreen() {
           )}
         </TouchableOpacity>
 
-        <Text style={styles.footerNote}>You can change these anytime in Settings</Text>
+        <Text style={styles.footerNote}>
+          You can update your baby's name and gender in Settings
+        </Text>
       </ScrollView>
 
       <Modal
@@ -302,7 +344,10 @@ export default function SetupScreen() {
             <View style={styles.pickerContainer}>
               <PickerColumn
                 label="Day"
-                items={datePickerData.days}
+                items={Array.from(
+                  { length: new Date(pickerYear, pickerMonth + 1, 0).getDate() },
+                  (_, i) => i + 1,
+                )}
                 selectedItem={pickerDay}
                 onSelect={setPickerDay}
               />
@@ -321,6 +366,7 @@ export default function SetupScreen() {
             </View>
 
             <TouchableOpacity
+              accessibilityRole="button"
               style={styles.modalConfirmButton}
               onPress={handleDateSelect}
               activeOpacity={0.8}
@@ -329,6 +375,7 @@ export default function SetupScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity
+              accessibilityRole="button"
               style={styles.modalCancelButton}
               onPress={() => setShowDatePicker(false)}
               activeOpacity={0.8}
@@ -342,13 +389,8 @@ export default function SetupScreen() {
   );
 }
 
-function FieldLabel({
-  icon,
-  label,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-}) {
+function FieldLabel({ icon, label }: { icon: keyof typeof Ionicons.glyphMap; label: string }) {
+  const { PALETTE, styles } = useSetupTheme();
   return (
     <View style={styles.fieldLabelRow}>
       <Ionicons name={icon} size={14} color={PALETTE.primary} />
@@ -372,6 +414,7 @@ function GenderPill({
   isLast?: boolean;
   onPress: () => void;
 }) {
+  const { PALETTE, styles } = useSetupTheme();
   const selectedStyle = {
     girl: styles.girlPillSelected,
     boy: styles.boyPillSelected,
@@ -388,25 +431,13 @@ function GenderPill({
 
   return (
     <TouchableOpacity
-      style={[
-        styles.genderPill,
-        isLast && styles.genderPillLast,
-        isSelected && selectedStyle,
-      ]}
+      accessibilityRole="button"
+      style={[styles.genderPill, isLast && styles.genderPillLast, isSelected && selectedStyle]}
       onPress={onPress}
       activeOpacity={0.75}
     >
-      <Ionicons
-        name={icon}
-        size={16}
-        color={isSelected ? selectedColor : PALETTE.lightText}
-      />
-      <Text
-        style={[
-          styles.genderText,
-          { color: isSelected ? selectedColor : unselectedColor },
-        ]}
-      >
+      <Ionicons name={icon} size={16} color={isSelected ? selectedColor : PALETTE.lightText} />
+      <Text style={[styles.genderText, { color: isSelected ? selectedColor : unselectedColor }]}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -424,6 +455,7 @@ function PickerColumn<T extends string | number>({
   selectedItem: T;
   onSelect: (item: T) => void;
 }) {
+  const { styles } = useSetupTheme();
   return (
     <View style={styles.pickerColumn}>
       <Text style={styles.pickerLabel}>{label}</Text>
@@ -436,17 +468,13 @@ function PickerColumn<T extends string | number>({
           const isSelected = selectedItem === item;
           return (
             <TouchableOpacity
+              accessibilityRole="button"
               key={item}
               style={[styles.pickerItem, isSelected && styles.pickerItemSelected]}
               onPress={() => onSelect(item)}
               activeOpacity={0.75}
             >
-              <Text
-                style={[
-                  styles.pickerItemText,
-                  isSelected && styles.pickerItemTextSelected,
-                ]}
-              >
+              <Text style={[styles.pickerItemText, isSelected && styles.pickerItemTextSelected]}>
                 {item}
               </Text>
             </TouchableOpacity>
@@ -457,318 +485,319 @@ function PickerColumn<T extends string | number>({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: PALETTE.background,
-  },
-  scrollView: {
-    flex: 1,
-    backgroundColor: PALETTE.background,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    backgroundColor: PALETTE.background,
-    paddingHorizontal: 24,
-    paddingBottom: 40,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-  },
-  stepText: {
-    color: PALETTE.muted,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  topBarSpacer: {
-    width: 40,
-    height: 40,
-  },
-  header: {
-    alignItems: 'center',
-    marginTop: 32,
-    marginBottom: 32,
-  },
-  headerIconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: PALETTE.softPeach,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heading: {
-    color: PALETTE.text,
-    fontSize: 24,
-    fontWeight: '700',
-    marginTop: 16,
-    textAlign: 'center',
-  },
-  subtitle: {
-    color: PALETTE.muted,
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  formCard: {
-    backgroundColor: PALETTE.card,
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 24,
-    shadowColor: PALETTE.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 3,
-  },
-  fieldLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  genderLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  fieldLabelText: {
-    color: PALETTE.muted,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  optionalLabel: {
-    color: PALETTE.lightText,
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  textInput: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: PALETTE.primary,
-    borderRadius: 12,
-    color: PALETTE.text,
-    fontSize: 15,
-    padding: 14,
-  },
-  namePreview: {
-    color: PALETTE.primary,
-    fontSize: 13,
-    fontStyle: 'italic',
-    marginTop: 6,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: PALETTE.border,
-    marginVertical: 20,
-  },
-  dateButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: PALETTE.primary,
-    borderRadius: 12,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  dateButtonLeft: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  dateButtonText: {
-    flex: 1,
-    fontSize: 15,
-    marginLeft: 10,
-  },
-  validationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  validationText: {
-    color: PALETTE.primary,
-    fontSize: 12,
-  },
-  agePill: {
-    alignSelf: 'flex-start',
-    alignItems: 'center',
-    backgroundColor: PALETTE.successBg,
-    borderRadius: 999,
-    flexDirection: 'row',
-    marginTop: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-  },
-  ageText: {
-    color: PALETTE.success,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  genderButtons: {
-    flexDirection: 'row',
-  },
-  genderPill: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: PALETTE.border,
-    borderRadius: 12,
-    flexDirection: 'row',
-    paddingVertical: 14,
-    marginRight: 8,
-  },
-  genderPillLast: {
-    marginRight: 0,
-  },
-  girlPillSelected: {
-    backgroundColor: '#FFE8F0',
-    borderColor: PALETTE.primary,
-    borderWidth: 1.5,
-  },
-  boyPillSelected: {
-    backgroundColor: '#E8F4FF',
-    borderColor: PALETTE.boy,
-    borderWidth: 1.5,
-  },
-  neutralPillSelected: {
-    backgroundColor: PALETTE.border,
-    borderColor: PALETTE.muted,
-    borderWidth: 1.5,
-  },
-  genderText: {
-    fontSize: 14,
-    marginLeft: 6,
-  },
-  continueButton: {
-    alignItems: 'center',
-    backgroundColor: PALETTE.primary,
-    borderRadius: 20,
-    justifyContent: 'center',
-    marginTop: 8,
-    paddingVertical: 18,
-    shadowColor: PALETTE.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  continueContent: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  continueText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-    marginLeft: 8,
-  },
-  footerNote: {
-    color: PALETTE.lightText,
-    fontSize: 11,
-    marginTop: 12,
-    textAlign: 'center',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: PALETTE.background,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-  },
-  dragHandle: {
-    alignSelf: 'center',
-    backgroundColor: '#E0D8D0',
-    borderRadius: 2,
-    height: 4,
-    marginBottom: 20,
-    width: 40,
-  },
-  modalTitle: {
-    color: PALETTE.text,
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  pickerContainer: {
-    flexDirection: 'row',
-  },
-  pickerColumn: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  pickerLabel: {
-    color: PALETTE.muted,
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  pickerScroll: {
-    height: 200,
-    width: '100%',
-  },
-  pickerItem: {
-    alignItems: 'center',
-    borderRadius: 8,
-    marginHorizontal: 4,
-    marginVertical: 2,
-    paddingVertical: 10,
-  },
-  pickerItemSelected: {
-    backgroundColor: PALETTE.primary,
-  },
-  pickerItemText: {
-    color: PALETTE.text,
-    fontSize: 16,
-  },
-  pickerItemTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  modalConfirmButton: {
-    alignItems: 'center',
-    backgroundColor: PALETTE.primary,
-    borderRadius: 16,
-    marginTop: 16,
-    padding: 14,
-    width: '100%',
-  },
-  modalConfirmText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  modalCancelButton: {
-    alignItems: 'center',
-    backgroundColor: PALETTE.softPeach,
-    borderRadius: 16,
-    marginTop: 8,
-    padding: 14,
-    width: '100%',
-  },
-  modalCancelText: {
-    color: PALETTE.muted,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});
+const createStyles = (PALETTE: typeof BASE_PALETTE) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: PALETTE.background,
+    },
+    scrollView: {
+      flex: 1,
+      backgroundColor: PALETTE.background,
+    },
+    scrollContent: {
+      flexGrow: 1,
+      backgroundColor: PALETTE.background,
+      paddingHorizontal: 24,
+      paddingBottom: 40,
+    },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    backButton: {
+      width: 40,
+      height: 40,
+      alignItems: 'flex-start',
+      justifyContent: 'center',
+    },
+    stepText: {
+      color: PALETTE.muted,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    topBarSpacer: {
+      width: 40,
+      height: 40,
+    },
+    header: {
+      alignItems: 'center',
+      marginTop: 32,
+      marginBottom: 32,
+    },
+    headerIconCircle: {
+      width: 80,
+      height: 80,
+      borderRadius: 40,
+      backgroundColor: PALETTE.softPeach,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heading: {
+      color: PALETTE.text,
+      fontSize: 24,
+      fontWeight: '700',
+      marginTop: 16,
+      textAlign: 'center',
+    },
+    subtitle: {
+      color: PALETTE.muted,
+      fontSize: 14,
+      lineHeight: 22,
+      marginTop: 8,
+      textAlign: 'center',
+    },
+    formCard: {
+      backgroundColor: PALETTE.card,
+      borderRadius: 24,
+      padding: 24,
+      marginBottom: 24,
+      shadowColor: PALETTE.primary,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 3,
+    },
+    fieldLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    genderLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    fieldLabelText: {
+      color: PALETTE.muted,
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1,
+    },
+    optionalLabel: {
+      color: PALETTE.lightText,
+      fontSize: 11,
+      fontWeight: '500',
+    },
+    textInput: {
+      backgroundColor: '#FFFFFF',
+      borderWidth: 1,
+      borderColor: PALETTE.primary,
+      borderRadius: 12,
+      color: PALETTE.text,
+      fontSize: 15,
+      padding: 14,
+    },
+    namePreview: {
+      color: PALETTE.primary,
+      fontSize: 13,
+      fontStyle: 'italic',
+      marginTop: 6,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: PALETTE.border,
+      marginVertical: 20,
+    },
+    dateButton: {
+      backgroundColor: '#FFFFFF',
+      borderWidth: 1,
+      borderColor: PALETTE.primary,
+      borderRadius: 12,
+      padding: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    dateButtonLeft: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginRight: 8,
+    },
+    dateButtonText: {
+      flex: 1,
+      fontSize: 15,
+      marginLeft: 10,
+    },
+    validationRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 8,
+    },
+    validationText: {
+      color: PALETTE.primary,
+      fontSize: 12,
+    },
+    agePill: {
+      alignSelf: 'flex-start',
+      alignItems: 'center',
+      backgroundColor: PALETTE.successBg,
+      borderRadius: 999,
+      flexDirection: 'row',
+      marginTop: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+    },
+    ageText: {
+      color: PALETTE.success,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    genderButtons: {
+      flexDirection: 'row',
+    },
+    genderPill: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#FFFFFF',
+      borderWidth: 1,
+      borderColor: PALETTE.border,
+      borderRadius: 12,
+      flexDirection: 'row',
+      paddingVertical: 14,
+      marginRight: 8,
+    },
+    genderPillLast: {
+      marginRight: 0,
+    },
+    girlPillSelected: {
+      backgroundColor: '#FFE8F0',
+      borderColor: PALETTE.primary,
+      borderWidth: 1.5,
+    },
+    boyPillSelected: {
+      backgroundColor: '#E8F4FF',
+      borderColor: PALETTE.boy,
+      borderWidth: 1.5,
+    },
+    neutralPillSelected: {
+      backgroundColor: PALETTE.border,
+      borderColor: PALETTE.muted,
+      borderWidth: 1.5,
+    },
+    genderText: {
+      fontSize: 14,
+      marginLeft: 6,
+    },
+    continueButton: {
+      alignItems: 'center',
+      backgroundColor: PALETTE.primary,
+      borderRadius: 20,
+      justifyContent: 'center',
+      marginTop: 8,
+      paddingVertical: 18,
+      shadowColor: PALETTE.primary,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.4,
+      shadowRadius: 12,
+      elevation: 6,
+    },
+    continueContent: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'center',
+    },
+    continueText: {
+      color: '#4A3728',
+      fontSize: 16,
+      fontWeight: '700',
+      marginLeft: 8,
+    },
+    footerNote: {
+      color: PALETTE.lightText,
+      fontSize: 11,
+      marginTop: 12,
+      textAlign: 'center',
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+      justifyContent: 'flex-end',
+    },
+    modalSheet: {
+      backgroundColor: PALETTE.background,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      padding: 24,
+    },
+    dragHandle: {
+      alignSelf: 'center',
+      backgroundColor: '#E0D8D0',
+      borderRadius: 2,
+      height: 4,
+      marginBottom: 20,
+      width: 40,
+    },
+    modalTitle: {
+      color: PALETTE.text,
+      fontSize: 18,
+      fontWeight: '700',
+      marginBottom: 20,
+      textAlign: 'center',
+    },
+    pickerContainer: {
+      flexDirection: 'row',
+    },
+    pickerColumn: {
+      flex: 1,
+      alignItems: 'center',
+    },
+    pickerLabel: {
+      color: PALETTE.muted,
+      fontSize: 12,
+      fontWeight: '700',
+      marginBottom: 8,
+      textTransform: 'uppercase',
+    },
+    pickerScroll: {
+      height: 200,
+      width: '100%',
+    },
+    pickerItem: {
+      alignItems: 'center',
+      borderRadius: 8,
+      marginHorizontal: 4,
+      marginVertical: 2,
+      paddingVertical: 10,
+    },
+    pickerItemSelected: {
+      backgroundColor: PALETTE.primary,
+    },
+    pickerItemText: {
+      color: PALETTE.text,
+      fontSize: 16,
+    },
+    pickerItemTextSelected: {
+      color: '#4A3728',
+      fontWeight: '700',
+    },
+    modalConfirmButton: {
+      alignItems: 'center',
+      backgroundColor: PALETTE.primary,
+      borderRadius: 16,
+      marginTop: 16,
+      padding: 14,
+      width: '100%',
+    },
+    modalConfirmText: {
+      color: '#4A3728',
+      fontSize: 16,
+      fontWeight: '700',
+    },
+    modalCancelButton: {
+      alignItems: 'center',
+      backgroundColor: PALETTE.softPeach,
+      borderRadius: 16,
+      marginTop: 8,
+      padding: 14,
+      width: '100%',
+    },
+    modalCancelText: {
+      color: PALETTE.muted,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+  });
